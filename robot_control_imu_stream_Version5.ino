@@ -123,24 +123,26 @@ void sendImuPacket() {
 }
 
 // dir: +1 right(cw), -1 left(ccw)
-void turn180WithIMU(int dir, int speed) {
+// Spins until the magnetometer heading is within HEADING_TOL degrees of targetDeg.
+void turnToHeading(int dir, int speed, float targetDeg) {
   if (speed < 1) speed = 120;
+
+  const float HEADING_TOL = 5.0;
+  const unsigned long TIMEOUT_MS = 10000;
 
   if (currentDir != 0) rampDown();
   delay(150);
 
-  float start = readHeadingDeg();
-  Serial.print("Turn start heading: "); Serial.println(start);
+  float startH = readHeadingDeg();
+  Serial.print("Turn start heading: "); Serial.println(startH);
+  Serial.print("Turn target heading: "); Serial.println(targetDeg);
 
   unsigned long tStart = millis();
-  const unsigned long TIMEOUT_MS = 6000;
 
   while (true) {
     float nowH = readHeadingDeg();
-    float delta = angleDiffDeg(start, nowH);
-    float turned = abs(delta);
 
-    if (turned >= 175.0) break;
+    if (abs(angleDiffDeg(nowH, targetDeg)) <= HEADING_TOL) break;
 
     if (dir == 1) spinRight(speed);
     else spinLeft(speed);
@@ -231,13 +233,13 @@ void handleCommand(String cmd) {
     return;
   }
 
-  if (cmd.startsWith("TURN_LEFT_180 ")) {
+  if (cmd.startsWith("TURN_LEFT_270 ")) {
     int speed = cmd.substring(14).toInt();
     if (speed < 1 || speed > 255) {
       Serial.println("ERROR: Speed must be 1-255.");
       return;
     }
-    turn180WithIMU(-1, speed);
+    turnToHeading(-1, speed, 270.0);
     return;
   }
 
@@ -247,7 +249,7 @@ void handleCommand(String cmd) {
       Serial.println("ERROR: Speed must be 1-255.");
       return;
     }
-    turn180WithIMU(1, speed);
+    turnToHeading(1, speed, 180.0);
     return;
   }
 
@@ -256,7 +258,7 @@ void handleCommand(String cmd) {
   Serial.println("  FORWARD <0-255>");
   Serial.println("  BACKWARD <0-255>");
   Serial.println("  SET_SPEED <0-255>");
-  Serial.println("  TURN_LEFT_180 <1-255>");
+  Serial.println("  TURN_LEFT_270 <1-255>");
   Serial.println("  TURN_RIGHT_180 <1-255>");
   Serial.println("  STOP | S");
   Serial.println("  IMU_STREAM [interval_ms]");
