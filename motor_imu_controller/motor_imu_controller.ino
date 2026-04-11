@@ -20,12 +20,38 @@ unsigned long lastImuTime  = 0;
 
 FaBo9Axis fabo_9axis;
 
+// ── Non-blocking turn state machine
+enum TurnState { TURN_IDLE, TURN_RAMP_DOWN, TURN_SETTLE, TURN_SPINNING, TURN_DONE };
+TurnState turnState = TURN_IDLE;
+
+// Turn parameters (set when a turn command starts)
+int    turnDir       = 0;      // +1=cw, -1=ccw
+int    turnSpeed     = 0;
+float  turnTargetDeg = 0.0;
+int    turnRampStep  = 0;
+unsigned long turnStepStart    = 0;   // for ramp-down settle timing
+unsigned long turnSpinStart    = 0;   // absolute start of spinning (for timeout)
+unsigned long turnLastCheck    = 0;   // last heading check time (for 10ms interval)
+unsigned long turnTimeout      = 10000;
+const float TURN_HEADING_TOL = 5.0;
+
+// ── Non-blocking ramp state machine (for FORWARD/BACKWARD)
+enum RampState { RAMP_IDLE, RAMP_RAMPING };
+RampState rampState = RAMP_IDLE;
+int       rampDir   = 0;
+int       rampTargetSpeed = 0;
+int       rampStep  = 0;
+unsigned long rampStepStart = 0;
+
 // ---------- Motor primitives ----------
 void emergencyStop() {
   analogWrite(LEFT_RPWM, 0);  analogWrite(LEFT_LPWM, 0);
   analogWrite(RIGHT_RPWM, 0); analogWrite(RIGHT_LPWM, 0);
   currentSpeed = 0;
   currentDir = 0;
+  // Reset all state machines
+  turnState = TURN_IDLE;
+  rampState = RAMP_IDLE;
   Serial.println("!! EMERGENCY STOP !!");
 }
 
@@ -34,6 +60,8 @@ void stopMotors() {
   analogWrite(RIGHT_RPWM, 0); analogWrite(RIGHT_LPWM, 0);
   currentSpeed = 0;
   currentDir = 0;
+  turnState = TURN_IDLE;
+  rampState = RAMP_IDLE;
   Serial.println("Motors stopped.");
 }
 
@@ -55,37 +83,6 @@ void spinRight(int speed) {
 void spinLeft(int speed) {
   analogWrite(LEFT_RPWM, 0);     analogWrite(LEFT_LPWM, speed);
   analogWrite(RIGHT_LPWM, 0);    analogWrite(RIGHT_RPWM, speed);
-}
-
-void rampDown() {
-  if (currentDir == 0) return;
-  unsigned long stepDelay = RAMP_TIME / RAMP_STEPS;
-  for (int i = RAMP_STEPS; i >= 0; i--) {
-    int speed = (i * currentSpeed) / RAMP_STEPS;
-    if (currentDir == 1) setForward(speed);
-    else setBackward(speed);
-    delay(stepDelay);
-  }
-  stopMotors();
-}
-
-void rampTo(int dir, int targetSpeed) {
-  unsigned long stepDelay = RAMP_TIME / RAMP_STEPS;
-
-  if (currentDir != 0 && currentDir != dir) {
-    rampDown();
-    delay(200);
-  }
-
-  for (int i = 0; i <= RAMP_STEPS; i++) {
-    int speed = (i * targetSpeed) / RAMP_STEPS;
-    if (dir == 1) setForward(speed);
-    else setBackward(speed);
-    delay(stepDelay);
-  }
-
-  currentSpeed = targetSpeed;
-  currentDir = dir;
 }
 
 // ---------- IMU helpers ----------
@@ -122,43 +119,128 @@ void sendImuPacket() {
   Serial.println(heading, 2);
 }
 
+// ── Non-blocking turn state machine tick — call every loop()
+// Returns true while a turn is in progress, false when idle.
+bool turnTick() {
+  unsigned long now = millis();
+  unsigned long stepDelay = RAMP_TIME / RAMP_STEPS;
+
+  switch (turnState) {
+
+    case TURN_IDLE:
+      return false;
+
+    case TURN_RAMP_DOWN: {
+      if (now - turnStepStart < stepDelay) return true;
+      int speed = (turnRampStep * currentSpeed) / RAMP_STEPS;
+      if (currentDir == 1) setForward(speed);
+      else setBackward(speed);
+      turnRampStep--;
+      turnStepStart = now;
+      if (turnRampStep < 0) {
+        stopMotors();
+        turnState = TURN_SETTLE;
+        turnStepStart = now;
+      }
+      return true;
+    }
+
+    case TURN_SETTLE:
+      if (now - turnStepStart >= 150) {
+        float startH = readHeadingDeg();
+        Serial.print("Turn start heading: "); Serial.println(startH);
+        Serial.print("Turn target heading: "); Serial.println(turnTargetDeg);
+        turnState      = TURN_SPINNING;
+        turnSpinStart  = millis();
+        turnLastCheck  = millis();
+        if (turnDir == 1) spinRight(turnSpeed);
+        else spinLeft(turnSpeed);
+      }
+      return true;
+
+    case TURN_SPINNING: {
+      // Check heading every ~10ms
+      if (now - turnLastCheck < 10) return true;
+      turnLastCheck = now;
+
+      float nowH = readHeadingDeg();
+      if (abs(angleDiffDeg(nowH, turnTargetDeg)) <= TURN_HEADING_TOL) {
+        stopMotors();
+        Serial.print("Turn complete. End heading: "); Serial.println(readHeadingDeg());
+        turnState = TURN_DONE;
+        return false;
+      }
+
+      // Timeout check against the original spin start time
+      if (now - turnSpinStart > turnTimeout) {
+        stopMotors();
+        Serial.println("Turn timeout.");
+        turnState = TURN_DONE;
+        return false;
+      }
+
+      return true;
+    }
+
+    case TURN_DONE:
+      turnState = TURN_IDLE;
+      return false;
+  }
+  return false;
+}
+
+// ── Non-blocking ramp state machine tick — call every loop()
+bool rampTick() {
+  if (rampState == RAMP_IDLE) return false;
+
+  unsigned long now = millis();
+  unsigned long stepDelay = RAMP_TIME / RAMP_STEPS;
+
+  if (now - rampStepStart < stepDelay) return true;
+
+  int speed = (rampStep * rampTargetSpeed) / RAMP_STEPS;
+  if (rampDir == 1) setForward(speed);
+  else setBackward(speed);
+
+  rampStep++;
+  rampStepStart = now;
+
+  if (rampStep > RAMP_STEPS) {
+    currentSpeed = rampTargetSpeed;
+    currentDir = rampDir;
+    rampState = RAMP_IDLE;
+    return false;
+  }
+  return true;
+}
+
+// ── Start a non-blocking turn — returns immediately
 // dir: +1 right(cw), -1 left(ccw)
-// Spins until the magnetometer heading is within HEADING_TOL degrees of targetDeg.
-void turnToHeading(int dir, int speed, float targetDeg) {
+void startTurn(int dir, int speed) {
   if (speed < 1) speed = 120;
 
-  const float HEADING_TOL = 5.0;
-  const unsigned long TIMEOUT_MS = 10000;
+  turnDir   = dir;
+  turnSpeed = speed;
 
-  if (currentDir != 0) rampDown();
-  delay(150);
+  // Calculate relative target heading: ±90° from current
+  float currentH = readHeadingDeg();
+  turnTargetDeg = currentH + (dir * 90.0);
+  if (turnTargetDeg >= 360.0) turnTargetDeg -= 360.0;
+  if (turnTargetDeg < 0.0)    turnTargetDeg += 360.0;
 
-  float startH = readHeadingDeg();
-  Serial.print("Turn start heading: "); Serial.println(startH);
-  Serial.print("Turn target heading: "); Serial.println(targetDeg);
+  Serial.print("Turn from heading: "); Serial.println(currentH);
+  Serial.print("Turn target heading: "); Serial.println(turnTargetDeg);
 
-  unsigned long tStart = millis();
-
-  while (true) {
-    float nowH = readHeadingDeg();
-
-    if (abs(angleDiffDeg(nowH, targetDeg)) <= HEADING_TOL) break;
-
-    if (dir == 1) spinRight(speed);
-    else spinLeft(speed);
-
-    if (millis() - tStart > TIMEOUT_MS) {
-      Serial.println("Turn timeout.");
-      break;
-    }
-    delay(10);
+  if (currentDir != 0) {
+    // Begin ramp-down phase
+    turnRampStep  = RAMP_STEPS;
+    turnStepStart = millis();
+    turnState     = TURN_RAMP_DOWN;
+  } else {
+    // Skip ramp-down, go straight to settle then spin
+    turnState     = TURN_SETTLE;
+    turnStepStart = millis();
   }
-
-  stopMotors();
-  delay(100);
-
-  float endH = readHeadingDeg();
-  Serial.print("Turn end heading: "); Serial.println(endH);
 }
 
 // ---------- Command handling ----------
@@ -166,19 +248,19 @@ void handleCommand(String cmd) {
   cmd.trim();
   cmd.toUpperCase();
 
+  // Emergency stop — always works, even mid-turn
   if (cmd == "S") {
     emergencyStop();
     return;
   }
 
   if (cmd == "STOP") {
-    if (currentDir == 0) Serial.println("Already stopped.");
-    else rampDown();
+    if (currentDir == 0 && turnState == TURN_IDLE) Serial.println("Already stopped.");
+    else stopMotors();
     return;
   }
 
   // IMU_STREAM [interval_ms]  — start streaming IMU data
-  // e.g. "IMU_STREAM" → 100 ms   "IMU_STREAM 50" → 50 ms (20 Hz)
   if (cmd == "IMU_STREAM" || cmd.startsWith("IMU_STREAM ")) {
     if (cmd.length() > 11) {
       int ms = cmd.substring(11).toInt();
@@ -218,6 +300,7 @@ void handleCommand(String cmd) {
     return;
   }
 
+  // FORWARD / BACKWARD — start non-blocking ramp
   if (cmd.startsWith("FORWARD ") || cmd.startsWith("BACKWARD ")) {
     int spaceIdx = cmd.indexOf(' ');
     String dirStr = cmd.substring(0, spaceIdx);
@@ -228,28 +311,38 @@ void handleCommand(String cmd) {
       return;
     }
 
-    int dir = (dirStr == "FORWARD") ? 1 : -1;
-    rampTo(dir, speed);
+    // Cancel any active turn
+    if (turnState != TURN_IDLE) {
+      turnState = TURN_IDLE;
+      stopMotors();
+    }
+
+    rampDir   = dir;
+    rampTargetSpeed = speed;
+    rampStep  = 0;
+    rampState = RAMP_RAMPING;
     return;
   }
 
-  if (cmd.startsWith("TURN_LEFT_270 ")) {
+  // TURN_LEFT_90 — turn left 90° relative to current heading
+  if (cmd.startsWith("TURN_LEFT_90 ")) {
+    int speed = cmd.substring(13).toInt();
+    if (speed < 1 || speed > 255) {
+      Serial.println("ERROR: Speed must be 1-255.");
+      return;
+    }
+    startTurn(-1, speed);
+    return;
+  }
+
+  // TURN_RIGHT_90 — turn right 90° relative to current heading
+  if (cmd.startsWith("TURN_RIGHT_90 ")) {
     int speed = cmd.substring(14).toInt();
     if (speed < 1 || speed > 255) {
       Serial.println("ERROR: Speed must be 1-255.");
       return;
     }
-    turnToHeading(-1, speed, 270.0);
-    return;
-  }
-
-  if (cmd.startsWith("TURN_RIGHT_180 ")) {
-    int speed = cmd.substring(15).toInt();
-    if (speed < 1 || speed > 255) {
-      Serial.println("ERROR: Speed must be 1-255.");
-      return;
-    }
-    turnToHeading(1, speed, 180.0);
+    startTurn(1, speed);
     return;
   }
 
@@ -258,8 +351,8 @@ void handleCommand(String cmd) {
   Serial.println("  FORWARD <0-255>");
   Serial.println("  BACKWARD <0-255>");
   Serial.println("  SET_SPEED <0-255>");
-  Serial.println("  TURN_LEFT_270 <1-255>");
-  Serial.println("  TURN_RIGHT_180 <1-255>");
+  Serial.println("  TURN_LEFT_90 <1-255>");
+  Serial.println("  TURN_RIGHT_90 <1-255>");
   Serial.println("  STOP | S");
   Serial.println("  IMU_STREAM [interval_ms]");
   Serial.println("  IMU_STOP");
@@ -293,7 +386,7 @@ void setup() {
 }
 
 void loop() {
-  // Non-blocking IMU streaming — does not interfere with command handling
+  // ── Non-blocking IMU streaming
   if (imuStreaming) {
     unsigned long now = millis();
     if (now - lastImuTime >= imuInterval) {
@@ -302,6 +395,13 @@ void loop() {
     }
   }
 
+  // ── Non-blocking ramp state machine
+  rampTick();
+
+  // ── Non-blocking turn state machine
+  turnTick();
+
+  // ── Serial command handling (always runs — even during turns)
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
     handleCommand(cmd);
