@@ -10,6 +10,12 @@ const int RIGHT_RPWM = 9, RIGHT_LPWM = 10, RIGHT_R_EN = 11, RIGHT_L_EN = 12;
 const int RAMP_STEPS = 50;
 const unsigned long RAMP_TIME = 800;
 
+// ── Differential drive kinematics (for EKF Pure Pursuit CMD)
+const float WHEEL_TRACK    = 0.60;  // meters between wheel contact patches
+const float HALF_TRACK     = WHEEL_TRACK / 2.0;  // 0.30 m
+const float MAX_LINEAR_MS  = 1.0;   // m/s at PWM=255 (calibrate per robot)
+const float PWM_PER_MS     = 255.0 / MAX_LINEAR_MS;
+
 int currentSpeed = 0;
 int currentDir   = 0; // 1=fwd, -1=back, 0=stop
 
@@ -102,6 +108,21 @@ void setBackward(int speed) {
   analogWrite(LEFT_LPWM, speed);  analogWrite(RIGHT_LPWM, speed);
 }
 
+// Independent wheel control for differential drive (EKF Pure Pursuit)
+void setForwardDiff(int leftSpeed, int rightSpeed) {
+  leftSpeed  = constrain(leftSpeed, 0, 255);
+  rightSpeed = constrain(rightSpeed, 0, 255);
+  analogWrite(LEFT_LPWM, 0);       analogWrite(RIGHT_LPWM, 0);
+  analogWrite(LEFT_RPWM, leftSpeed);  analogWrite(RIGHT_RPWM, rightSpeed);
+}
+
+void setBackwardDiff(int leftSpeed, int rightSpeed) {
+  leftSpeed  = constrain(leftSpeed, 0, 255);
+  rightSpeed = constrain(rightSpeed, 0, 255);
+  analogWrite(LEFT_RPWM, 0);       analogWrite(RIGHT_RPWM, 0);
+  analogWrite(LEFT_LPWM, leftSpeed);  analogWrite(RIGHT_LPWM, rightSpeed);
+}
+
 void spinRight(int speed) {
   analogWrite(LEFT_LPWM, 0);     analogWrite(LEFT_RPWM, speed);
   analogWrite(RIGHT_RPWM, 0);    analogWrite(RIGHT_LPWM, speed);
@@ -129,7 +150,7 @@ float angleDiffDeg(float fromDeg, float toDeg) {
 }
 
 // Send combined IMU + Encoder packet over Serial as a single CSV line:
-// IMU,ax,ay,az,gx,gy,gz,heading,enc1,enc2
+// IMU,ax,ay,az,gx,gy,gz,heading,enc1_delta,enc2_delta,dt
 void sendImuPacket() {
   float ax, ay, az, gx, gy, gz;
   fabo_9axis.readAccelXYZ(&ax, &ay, &az);
@@ -146,6 +167,10 @@ void sendImuPacket() {
   enc1_snapshot = c1;
   enc2_snapshot = c2;
 
+  unsigned long now = millis();
+  float dt = (now - lastImuTime) / 1000.0;  // seconds for EKF
+  lastImuTime = now;
+
   Serial.print("IMU,");
   Serial.print(ax, 3); Serial.print(",");
   Serial.print(ay, 3); Serial.print(",");
@@ -155,7 +180,8 @@ void sendImuPacket() {
   Serial.print(gz, 3); Serial.print(",");
   Serial.print(heading, 2); Serial.print(",");
   Serial.print(enc1_delta); Serial.print(",");
-  Serial.println(enc2_delta);
+  Serial.print(enc2_delta); Serial.print(",");
+  Serial.println(dt, 3);
 }
 
 // ── Non-blocking turn state machine tick — call every loop()
@@ -285,6 +311,59 @@ void startTurn(int dir, int speed) {
 // ---------- Command handling ----------
 void handleCommand(String cmd) {
   cmd.trim();
+
+  // CMD,v,omega — Pure Pursuit differential drive command
+  // Must check BEFORE toUpperCase() because v/omega are floats
+  if (cmd.startsWith("CMD") || cmd.startsWith("cmd")) {
+    int firstComma = cmd.indexOf(',');
+    int secondComma = cmd.indexOf(',', firstComma + 1);
+    if (firstComma < 0 || secondComma < 0) {
+      Serial.println("ERROR: CMD format is CMD,v,omega");
+      return;
+    }
+    float v       = cmd.substring(firstComma + 1, secondComma).toFloat();
+    float omega   = cmd.substring(secondComma + 1).toFloat();
+
+    // Differential drive kinematics
+    float v_left  = v - omega * HALF_TRACK;  // m/s
+    float v_right = v + omega * HALF_TRACK;  // m/s
+
+    // Convert to PWM and handle direction per wheel
+    int leftPWM  = (int)(abs(v_left)  * PWM_PER_MS);
+    int rightPWM = (int)(abs(v_right) * PWM_PER_MS);
+    leftPWM  = constrain(leftPWM,  0, 255);
+    rightPWM = constrain(rightPWM, 0, 255);
+
+    // Cancel any active turn or ramp
+    turnState = TURN_IDLE;
+    rampState = RAMP_IDLE;
+
+    // Set direction per wheel and apply PWM
+    bool leftForward  = v_left  >= 0;
+    bool rightForward = v_right >= 0;
+
+    if (leftForward && rightForward) {
+      setForwardDiff(leftPWM, rightPWM);
+      currentDir = 1;
+    } else if (!leftForward && !rightForward) {
+      setBackwardDiff(leftPWM, rightPWM);
+      currentDir = -1;
+    } else if (leftForward && !rightForward) {
+      // Left forward, right backward — pivot turn
+      analogWrite(LEFT_LPWM, 0);   analogWrite(LEFT_RPWM, leftPWM);
+      analogWrite(RIGHT_RPWM, 0);  analogWrite(RIGHT_LPWM, rightPWM);
+      currentDir = 0;
+    } else {
+      // Left backward, right forward — pivot turn
+      analogWrite(LEFT_RPWM, 0);   analogWrite(LEFT_LPWM, leftPWM);
+      analogWrite(RIGHT_LPWM, 0);  analogWrite(RIGHT_RPWM, rightPWM);
+      currentDir = 0;
+    }
+
+    currentSpeed = max(leftPWM, rightPWM);
+    return;
+  }
+
   cmd.toUpperCase();
 
   // Emergency stop — always works, even mid-turn
@@ -405,6 +484,7 @@ void handleCommand(String cmd) {
   Serial.println("  TURN_LEFT_90 <1-255>");
   Serial.println("  TURN_RIGHT_90 <1-255>");
   Serial.println("  STOP | S");
+  Serial.println("  CMD,<v_m/s>,<omega_rad/s>  — Pure Pursuit differential drive");
   Serial.println("  IMU_STREAM [interval_ms]");
   Serial.println("  IMU_STOP");
   Serial.println("  IMU_READ");
@@ -441,6 +521,13 @@ void setup() {
     Serial.println("device error");
     while (1);
   }
+
+  // ── Auto-start IMU streaming for autonomous/EKF operation
+  imuStreaming = true;
+  lastImuTime = millis();  // prime the timer so first packet sends immediately
+  Serial.print("IMU streaming auto-started @ ");
+  Serial.print(imuInterval);
+  Serial.println(" ms");
 
   Serial.println("Ready.");
 }
