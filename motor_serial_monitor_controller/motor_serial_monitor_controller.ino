@@ -35,6 +35,7 @@ bool imuStreaming = false;
 unsigned long imuInterval = 100;   // ms between IMU packets (default 10 Hz)
 unsigned long lastImuTime  = 0;    // previous IMU packet timestamp (for dt_ms field)
 unsigned long lastImuSchedule = 0; // scheduler timestamp for periodic streaming
+const float IMU_FRAME_ROTATION_DEG = 90.0;  // +90° IMU->robot frame alignment
 
 FaBo9Axis fabo_9axis;
 
@@ -62,6 +63,10 @@ TurnState turnState = TURN_IDLE;
 int    turnDir       = 0;      // +1=cw, -1=ccw
 int    turnSpeed     = 0;
 float  turnTargetDeg = 0.0;
+float  turnRequestedDeg = 90.0;
+float  turnProgressDeg = 0.0;
+float  turnLastHeadingDeg = 0.0;
+bool   turnProgressValid = false;
 int    turnRampStep  = 0;
 unsigned long turnStepStart    = 0;   // for ramp-down settle timing
 unsigned long turnSpinStart    = 0;   // absolute start of spinning (for timeout)
@@ -69,8 +74,6 @@ unsigned long turnLastCheck    = 0;   // last heading check time (for 10ms inter
 unsigned long turnTimeout      = 10000;
 const float TURN_HEADING_TOL = 5.0;
 const unsigned long TURN_MIN_SPIN_MS = 80;
-float turnPrevErrDeg = 0.0;
-bool turnPrevErrValid = false;
 
 // ── Non-blocking ramp state machine (for FORWARD/BACKWARD)
 enum RampState { RAMP_IDLE, RAMP_RAMPING };
@@ -119,8 +122,8 @@ void emergencyStop() {
   // Reset all state machines
   turnState = TURN_IDLE;
   rampState = RAMP_IDLE;
-  turnPrevErrDeg = 0.0;
-  turnPrevErrValid = false;
+  turnProgressDeg = 0.0;
+  turnProgressValid = false;
   Serial.println("!! EMERGENCY STOP !!");
 }
 
@@ -132,8 +135,8 @@ void stopMotors() {
   currentDir = 0;
   turnState = TURN_IDLE;
   rampState = RAMP_IDLE;
-  turnPrevErrDeg = 0.0;
-  turnPrevErrValid = false;
+  turnProgressDeg = 0.0;
+  turnProgressValid = false;
   Serial.println("Motors stopped.");
 }
 
@@ -143,8 +146,8 @@ void cancelTurnAndRampForDriveCommand() {
   }
   turnState = TURN_IDLE;
   rampState = RAMP_IDLE;
-  turnPrevErrDeg = 0.0;
-  turnPrevErrValid = false;
+  turnProgressDeg = 0.0;
+  turnProgressValid = false;
 }
 
 void setForward(int speed) {
@@ -307,9 +310,18 @@ bool pidTick() {
 }
 
 // ---------- IMU helpers ----------
+void rotateImuFrameXY(float &x, float &y) {
+  const float rotRad = IMU_FRAME_ROTATION_DEG * PI / 180.0;
+  const float xRot = x * cos(rotRad) - y * sin(rotRad);
+  const float yRot = x * sin(rotRad) + y * cos(rotRad);
+  x = xRot;
+  y = yRot;
+}
+
 float readHeadingDeg() {
   float mx, my, mz;
   fabo_9axis.readMagnetXYZ(&mx, &my, &mz);
+  rotateImuFrameXY(mx, my);
   float heading = atan2(my, mx) * 180.0 / PI;
   if (heading < 0) heading += 360.0;
   return heading;
@@ -327,7 +339,9 @@ float angleDiffDeg(float fromDeg, float toDeg) {
 void sendImuPacket() {
   float ax, ay, az, gx, gy, gz;
   fabo_9axis.readAccelXYZ(&ax, &ay, &az);
+  rotateImuFrameXY(ax, ay);
   fabo_9axis.readGyroXYZ(&gx, &gy, &gz);
+  rotateImuFrameXY(gx, gy);
   float heading = readHeadingDeg();
 
   // Atomic encoder snapshot + delta calculation
@@ -397,8 +411,9 @@ bool turnTick() {
         float startH = readHeadingDeg();
         Serial.print("Turn start heading: "); Serial.println(startH);
         Serial.print("Turn target heading: "); Serial.println(turnTargetDeg);
-        turnPrevErrDeg = angleDiffDeg(startH, turnTargetDeg);
-        turnPrevErrValid = true;
+        turnProgressDeg = 0.0;
+        turnLastHeadingDeg = startH;
+        turnProgressValid = true;
         turnState      = TURN_SPINNING;
         turnSpinStart  = millis();
         turnLastCheck  = millis();
@@ -413,22 +428,26 @@ bool turnTick() {
       turnLastCheck = now;
 
       float nowH = readHeadingDeg();
-      float errDeg = angleDiffDeg(nowH, turnTargetDeg);
-      bool withinTol = abs(errDeg) <= TURN_HEADING_TOL;
-      bool crossedTarget = false;
-      if (turnPrevErrValid) {
-        crossedTarget = ((turnPrevErrDeg > 0.0 && errDeg < 0.0) || (turnPrevErrDeg < 0.0 && errDeg > 0.0));
+      if (!turnProgressValid) {
+        turnProgressDeg = 0.0;
+        turnLastHeadingDeg = nowH;
+        turnProgressValid = true;
       }
+      float stepDeg = angleDiffDeg(turnLastHeadingDeg, nowH);
+      turnLastHeadingDeg = nowH;
+      turnProgressDeg += (-stepDeg * turnDir);
+      if (turnProgressDeg < 0.0) turnProgressDeg = 0.0;
 
-      if ((withinTol || crossedTarget) && (now - turnSpinStart >= TURN_MIN_SPIN_MS)) {
+      float remainingDeg = turnRequestedDeg - turnProgressDeg;
+      bool reachedTarget = turnProgressDeg >= turnRequestedDeg;
+      bool withinTol = abs(remainingDeg) <= TURN_HEADING_TOL;
+
+      if ((reachedTarget || withinTol) && (now - turnSpinStart >= TURN_MIN_SPIN_MS)) {
         stopMotors();
         Serial.print("Turn complete. End heading: "); Serial.println(nowH);
         turnState = TURN_DONE;
         return false;
       }
-
-      turnPrevErrDeg = errDeg;
-      turnPrevErrValid = true;
 
       // Timeout check against the original spin start time
       if (now - turnSpinStart > turnTimeout) {
@@ -483,10 +502,13 @@ void startTurn(int dir, int speed) {
 
   turnDir   = dir;
   turnSpeed = speed;
+  turnRequestedDeg = 90.0;
+  turnProgressDeg = 0.0;
+  turnProgressValid = false;
 
   // Calculate relative target heading: ±90° from current
   float currentH = readHeadingDeg();
-  turnTargetDeg = currentH + (dir * 90.0);
+  turnTargetDeg = currentH - (dir * turnRequestedDeg);
   if (turnTargetDeg >= 360.0) turnTargetDeg -= 360.0;
   if (turnTargetDeg < 0.0)    turnTargetDeg += 360.0;
 

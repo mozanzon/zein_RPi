@@ -49,7 +49,7 @@ Road Inspector Bot is a Raspberry Pi + Arduino mobile robot platform designed fo
 - **Differential drive** with independent left/right motor channels
 - **Smooth ramping** for acceleration/deceleration (50 steps over 800ms)
 - **Emergency stop** with immediate motor cutoff
-- **IMU-assisted heading control** — relative 90° left/right turns
+- **IMU-assisted heading control** — relative 90° left/right turns that track turn progress from start and stop within heading tolerance
 - **Dynamic speed adjustment** via `SET_SPEED` command without changing direction
 
 ### IMU Telemetry
@@ -57,6 +57,7 @@ Road Inspector Bot is a Raspberry Pi + Arduino mobile robot platform designed fo
 - **Configurable streaming** from 2 Hz to 50 Hz (adjustable interval)
 - **One-shot reads** for on-demand sensor snapshots
 - **Compass heading calculation** from magnetometer data
+- **Robot-frame aligned output** — IMU telemetry is rotated +90° around Z before publish
 - **Real-time visualization**: compass gauge, accelerometer rolling chart
 
 ### Vision System
@@ -189,8 +190,8 @@ Send commands to the Arduino via serial (115200 baud, 8N1):
 | `FORWARD <0-255>` | Move forward with ramp-up to specified speed |
 | `BACKWARD <0-255>` | Move backward with ramp-up to specified speed |
 | `SET_SPEED <0-255>` | Update current motor speed without changing direction |
-| `TURN_LEFT_90 <1-255>` | Relative left 90° turn using compass heading |
-| `TURN_RIGHT_90 <1-255>` | Relative right 90° turn using compass heading |
+| `TURN_LEFT_90 <1-255>` | Relative left turn that tracks heading change from start and stops at 90° within tolerance |
+| `TURN_RIGHT_90 <1-255>` | Relative right turn that tracks heading change from start and stops at 90° within tolerance |
 | `STOP` | Stop motors |
 | `S` | Emergency stop (immediate cutoff) |
 | `CMD,<v_m/s>,<omega_rad/s>` | Differential-drive command for autonomy stack |
@@ -355,7 +356,7 @@ IMU,ax,ay,az,gx,gy,gz,heading,enc1_delta,enc2_delta,dt_ms,enc1_total,enc2_total
 ```
 - `ax, ay, az`: Accelerometer (g-force, 3 decimal places)
 - `gx, gy, gz`: Gyroscope (°/s, 3 decimal places)
-- `heading`: Compass heading (degrees, 2 decimal places, 0-360°)
+- `heading`: Compass heading after +90° Z-frame rotation for robot-frame alignment (degrees, 2 decimal places, 0-360°)
 - `enc1_delta, enc2_delta`: Encoder tick deltas since previous IMU packet
 - `dt_ms`: Packet delta-time in milliseconds
 - `enc1_total, enc2_total`: Absolute encoder counts since reset
