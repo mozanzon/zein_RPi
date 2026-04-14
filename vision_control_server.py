@@ -9,6 +9,7 @@ import sys
 import queue
 
 from flask import Flask, Response, request, jsonify
+from imu_stabilizer import ImuReadingStabilizer
 
 try:
     import serial
@@ -36,6 +37,13 @@ ser = None
 ser_lock = threading.Lock()
 open_serial_lock = threading.Lock()
 camera = None
+imu_reading_stabilizer = ImuReadingStabilizer(
+    accel_alpha=0.20,
+    gyro_alpha=0.20,
+    heading_alpha=0.18,
+    encoder_noise_floor_ticks=1,
+    encoder_max_ticks_per_sec=2500,
+)
 
 # ── IMU state — updated by background reader thread
 imu_data = {
@@ -199,6 +207,28 @@ def _parse_imu(line):
         enc2_total_wire = int(parts[12]) if has_totals else None
     except ValueError:
         return
+
+    stabilized = imu_reading_stabilizer.stabilize(
+        ax=ax,
+        ay=ay,
+        az=az,
+        gx=gx,
+        gy=gy,
+        gz=gz,
+        heading=heading,
+        enc1_delta=enc1_delta,
+        enc2_delta=enc2_delta,
+        dt_ms=dt_ms,
+    )
+    ax = stabilized["ax"]
+    ay = stabilized["ay"]
+    az = stabilized["az"]
+    gx = stabilized["gx"]
+    gy = stabilized["gy"]
+    gz = stabilized["gz"]
+    heading = stabilized["heading"]
+    enc1_delta = stabilized["enc1_delta"]
+    enc2_delta = stabilized["enc2_delta"]
 
     dt_sec = dt_ms / 1000.0 if dt_ms > 0 else 0.0
 
