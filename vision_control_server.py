@@ -697,7 +697,7 @@ async function applyPid() {{
   }} catch (e) {{
     statusEl.textContent = 'ERR: ' + e;
   }}
-}
+}}
 
 // ── IMU commands
 function startImu() {{
