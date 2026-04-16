@@ -726,6 +726,11 @@
                 <line id="yawNeedle" x1="30" y1="30" x2="30" y2="8" stroke="var(--danger)" stroke-width="2" stroke-linecap="round"
                       style="transition: transform 0.15s ease-out; transform-origin: 30px 30px;"/>
               </svg>
+              <div style="text-align:center; margin-top:6px;">
+                <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
+                  <span id="yawTurnDir">NONE</span> · <span id="yawRateInline">0.0</span>°/s
+                </div>
+              </div>
             </div>
           </div>
 
@@ -762,29 +767,29 @@
         <div class="card-body">
           <div class="dpad">
             <div class="dpad-spacer"></div>
-            <button class="dpad-btn" id="btnForward" data-cmd="F" onpointerdown="cmdDown(this)" onpointerup="cmdUp(this)" onpointerleave="cmdUp(this)">
+            <button class="dpad-btn" id="btnForward" data-cmd="F" onpointerdown="cmdTap(this)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
             </button>
             <div class="dpad-spacer"></div>
 
-            <button class="dpad-btn" id="btnLeft" data-cmd="L" onpointerdown="cmdDown(this)" onpointerup="cmdUp(this)" onpointerleave="cmdUp(this)">
+            <button class="dpad-btn" id="btnLeft" data-cmd="L" onpointerdown="cmdTap(this)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l-7 7 7 7"/></svg>
             </button>
-            <button class="dpad-btn stop-btn" id="btnStop" data-cmd="S" onclick="sendCmd('S')">
+            <button class="dpad-btn stop-btn" id="btnStop" data-cmd="S" onclick="stopMotion()">
               <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
-            <button class="dpad-btn" id="btnRight" data-cmd="R" onpointerdown="cmdDown(this)" onpointerup="cmdUp(this)" onpointerleave="cmdUp(this)">
+            <button class="dpad-btn" id="btnRight" data-cmd="R" onpointerdown="cmdTap(this)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 5l7 7-7 7"/></svg>
             </button>
 
             <div class="dpad-spacer"></div>
-            <button class="dpad-btn" id="btnBackward" data-cmd="B" onpointerdown="cmdDown(this)" onpointerup="cmdUp(this)" onpointerleave="cmdUp(this)">
+            <button class="dpad-btn" id="btnBackward" data-cmd="B" onpointerdown="cmdTap(this)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7 7 7-7"/></svg>
             </button>
             <div class="dpad-spacer"></div>
           </div>
           <div class="kbd-hint">
-            Keyboard: <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> or <kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd> &nbsp; <kbd>Space</kbd> = Stop
+            Keyboard: <kbd>W</kbd>/<kbd>↑</kbd> and <kbd>S</kbd>/<kbd>↓</kbd> latch motion, <kbd>A</kbd>/<kbd>D</kbd> do 90° turns, <kbd>Space</kbd> = Stop
           </div>
         </div>
       </div>
@@ -807,7 +812,7 @@
       <!-- PID Auto-Balance -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">⚖️ PID Auto-Balance</span>
+          <span class="card-title">🧭 Yaw PID Control</span>
           <div class="stream-toggle">
             <span class="toggle-label" id="pidLabel">PID OFF</span>
             <div class="toggle-switch" id="pidToggle" onclick="togglePID()"></div>
@@ -816,8 +821,8 @@
         <div class="card-body">
           <!-- Roll readout -->
           <div style="text-align:center;margin-bottom:12px;">
-            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);">Roll</div>
-            <div style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--info);" id="pidRollDisplay">—</div>
+            <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);">Yaw Error</div>
+            <div style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--info);" id="pidYawErrDisplay">—</div>
             <div style="font-size:12px;color:var(--text-muted);">deg</div>
           </div>
           <!-- Correction readout -->
@@ -881,6 +886,15 @@
               <div class="telem-cell-value" id="telTemp">—</div>
               <span class="telem-cell-unit">°C</span>
             </div>
+            <div class="telem-cell">
+              <div class="telem-cell-label">Yaw Rate</div>
+              <div class="telem-cell-value" id="telYawRate">—</div>
+              <span class="telem-cell-unit">°/s</span>
+            </div>
+            <div class="telem-cell">
+              <div class="telem-cell-label">Turn Dir</div>
+              <div class="telem-cell-value" id="telTurnDir">—</div>
+            </div>
           </div>
         </div>
       </div>
@@ -915,6 +929,7 @@ let ws = null;
 let isConnected = false;
 let streamOn = false;
 let pidOn = false;
+let activeMotionCmd = 'S';
 
 // Chart data buffers (last 200 samples)
 const CHART_LEN = 200;
@@ -949,7 +964,8 @@ function connect() {
     setStatus('connected');
     addLog('info', `Connected to ${url}`);
     startRateTimer();
-    // Sync PID state
+    // Sync current robot state
+    setTimeout(() => sendCmd('STATUS'), 150);
     setTimeout(() => sendCmd('PID STATUS'), 300);
   };
 
@@ -1026,6 +1042,11 @@ function handleMessage(raw) {
       break;
     case 'ack':
       addLog('ack', `ACK: ${data.cmd} spd=${data.spd}`);
+      if (data.cmd === 'F' || data.cmd === 'B' || data.cmd === 'S') {
+        setActiveMotion(data.cmd);
+      } else if (data.cmd === 'L' || data.cmd === 'R') {
+        flashTurnButton(data.cmd);
+      }
       break;
     case 'err':
       addLog('err', `ERR: ${data.msg}`);
@@ -1040,11 +1061,26 @@ function handleMessage(raw) {
         streamOn = true;
         document.getElementById('streamToggle').classList.add('on');
         document.getElementById('streamLabel').textContent = 'Stream ON';
+      } else {
+        streamOn = false;
+        document.getElementById('streamToggle').classList.remove('on');
+        document.getElementById('streamLabel').textContent = 'Stream OFF';
       }
       if (data.pid) {
         pidOn = true;
         document.getElementById('pidToggle').classList.add('on');
         document.getElementById('pidLabel').textContent = 'PID ON';
+      } else {
+        pidOn = false;
+        document.getElementById('pidToggle').classList.remove('on');
+        document.getElementById('pidLabel').textContent = 'PID OFF';
+      }
+      if (data.motion === 'FWD') {
+        setActiveMotion('F');
+      } else if (data.motion === 'BWD') {
+        setActiveMotion('B');
+      } else {
+        setActiveMotion('S');
       }
       break;
     case 'pid':
@@ -1057,7 +1093,7 @@ function handleMessage(raw) {
         document.getElementById('pidToggle').classList.remove('on');
         document.getElementById('pidLabel').textContent = 'PID OFF';
       }
-      document.getElementById('pidRollDisplay').textContent = (data.roll || 0).toFixed(1);
+      document.getElementById('pidYawErrDisplay').textContent = (data.err || 0).toFixed(1);
       document.getElementById('pidCorrDisplay').textContent = data.corr !== undefined ? data.corr : '—';
       // Update sliders
       if (data.kp !== undefined) {
@@ -1072,7 +1108,7 @@ function handleMessage(raw) {
         document.getElementById('kdSlider').value = data.kd;
         document.getElementById('kdDisplay').textContent = parseFloat(data.kd).toFixed(2);
       }
-      addLog('info', `PID: roll=${(data.roll||0).toFixed(1)}° corr=${data.corr} kp=${data.kp} ki=${data.ki} kd=${data.kd}`);
+      addLog('info', `PID: yaw=${(data.yaw||0).toFixed(1)}° err=${(data.err||0).toFixed(1)}° corr=${data.corr} kp=${data.kp} ki=${data.ki} kd=${data.kd}`);
       break;
     case 'info':
       addLog('info', data.msg);
@@ -1118,6 +1154,12 @@ function updateIMU(d) {
   document.getElementById('telAy').textContent = (d.ay || 0).toFixed(2);
   document.getElementById('telAz').textContent = (d.az || 0).toFixed(2);
   document.getElementById('telTemp').textContent = (d.temp || 0).toFixed(1);
+  const yawRate = d.yaw_rate || 0;
+  const turnDir = d.turn_dir || 'NONE';
+  document.getElementById('telYawRate').textContent = yawRate.toFixed(1);
+  document.getElementById('telTurnDir').textContent = turnDir;
+  document.getElementById('yawTurnDir').textContent = turnDir;
+  document.getElementById('yawRateInline').textContent = yawRate.toFixed(1);
 
   // Push chart data
   pushChartData(d.ax || 0, d.ay || 0, d.az || 0);
@@ -1299,13 +1341,43 @@ function applyPID() {
 //  D-PAD (pointer + keyboard)
 // ═══════════════════════════════════════════════════════════
 
-function cmdDown(btn) {
-  btn.classList.add('active');
-  sendCmd(btn.dataset.cmd);
+const motionBtnMap = { F: 'btnForward', B: 'btnBackward', L: 'btnLeft', R: 'btnRight' };
+
+function setActiveMotion(cmd) {
+  activeMotionCmd = cmd;
+  ['btnForward', 'btnBackward'].forEach((id) => {
+    document.getElementById(id).classList.remove('active');
+  });
+  const id = motionBtnMap[cmd];
+  if (id && (cmd === 'F' || cmd === 'B')) {
+    document.getElementById(id).classList.add('active');
+  }
 }
-function cmdUp(btn) {
-  btn.classList.remove('active');
+
+function flashTurnButton(cmd) {
+  const id = motionBtnMap[cmd];
+  if (!id) return;
+  const btn = document.getElementById(id);
+  btn.classList.add('active');
+  setTimeout(() => btn.classList.remove('active'), 180);
+}
+
+function stopMotion() {
   sendCmd('S');
+  setActiveMotion('S');
+  const stopBtn = document.getElementById('btnStop');
+  stopBtn.classList.add('active');
+  setTimeout(() => stopBtn.classList.remove('active'), 180);
+}
+
+function cmdTap(btn) {
+  const cmd = btn.dataset.cmd;
+  sendCmd(cmd);
+  if (cmd === 'F' || cmd === 'B') {
+    setActiveMotion(cmd);
+  } else if (cmd === 'L' || cmd === 'R') {
+    flashTurnButton(cmd);
+  }
 }
 
 // Keyboard controls
@@ -1323,9 +1395,7 @@ document.addEventListener('keydown', (e) => {
 
   if (e.code === 'Space' || e.key === ' ') {
     e.preventDefault();
-    sendCmd('S');
-    document.getElementById('btnStop').classList.add('active');
-    setTimeout(() => document.getElementById('btnStop').classList.remove('active'), 150);
+    stopMotion();
     return;
   }
 
@@ -1333,9 +1403,11 @@ document.addEventListener('keydown', (e) => {
   if (cmd && !activeKeys.has(e.key)) {
     activeKeys.add(e.key);
     sendCmd(cmd);
-    // Highlight matching button
-    const btnId = { F:'btnForward', B:'btnBackward', L:'btnLeft', R:'btnRight' }[cmd];
-    if (btnId) document.getElementById(btnId).classList.add('active');
+    if (cmd === 'F' || cmd === 'B') {
+      setActiveMotion(cmd);
+    } else if (cmd === 'L' || cmd === 'R') {
+      flashTurnButton(cmd);
+    }
   }
 });
 
@@ -1344,10 +1416,6 @@ document.addEventListener('keyup', (e) => {
   const cmd = keyMap[e.key];
   if (cmd && activeKeys.has(e.key)) {
     activeKeys.delete(e.key);
-    // Only stop if no other direction keys held
-    if (activeKeys.size === 0) sendCmd('S');
-    const btnId = { F:'btnForward', B:'btnBackward', L:'btnLeft', R:'btnRight' }[cmd];
-    if (btnId) document.getElementById(btnId).classList.remove('active');
   }
 });
 
