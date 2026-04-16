@@ -140,8 +140,8 @@ const char* motionModeToStr(MotionMode mode) {
 }
 
 const char* turnDirFromRate(float yawRate) {
-  if (yawRate > TURN_DIR_RATE_THRESHOLD) return "RIGHT";
-  if (yawRate < -TURN_DIR_RATE_THRESHOLD) return "LEFT";
+  if (yawRate > TURN_DIR_RATE_THRESHOLD) return "LEFT";
+  if (yawRate < -TURN_DIR_RATE_THRESHOLD) return "RIGHT";
   return "NONE";
 }
 
@@ -370,7 +370,7 @@ bool beginTurn90(MotionMode mode, int spd) {
   turnStartMs = millis();
   turnStableSamples = 0;
 
-  const float delta = (mode == MOTION_TURN_RIGHT) ? 90.0f : -90.0f;
+  const float delta = (mode == MOTION_TURN_RIGHT) ? -90.0f : 90.0f;
   yawPID.setpoint = wrapAngle180(currentYawDeg + delta);
   resetYawPID();
   return true;
