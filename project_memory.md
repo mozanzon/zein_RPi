@@ -10,9 +10,21 @@ The system uses an **Arduino** hooked up to an **MPU9250 IMU** to capture high-s
 - **Frontend (Laptop)**: HTML5, CSS3 (Light Mode HUD), Vanilla Javascript.
 
 ## Current Architecture
-1. **Arduino (`arduino/imu_telemetry/`)**: Captures MPU9250 logic (using Madgwick/Mahony filters for responsiveness vs accuracy balance) and prints `{"heading": 123.45, "pitch": ..., "roll": ...}` over Serial @ 115200 baud.
-2. **RPi Server (`rpi_server/`)**: Python script reads Serial data. Runs a WebSocket server (port 8765) and broadcasts JSON payloads.
-3. **Web Client (`client/`)**: Client manually enters the RPi's IP address. UI connects via WebSockets and manipulates SVG/CSS transforms to simulate a robot HUD (white theme).
+1. **Arduino (`arduino/imu_telemetry/`)**: 
+   - Uses the **Hideaki Tai MPU9250** library (optimized for 8-bit AVR boards like Mega 2560).
+   - Captures MPU9250 orientation and prints `{"yaw": 123.45, "pitch": ..., "roll": ...}` over Serial @ 115200 baud.
+2. **RPi Server (`rpi_server/`)**: 
+   - Python script reads Serial data. 
+   - Uses a virtual environment: `python3 -m venv venv`, `source venv/bin/activate`, `pip install -r requirements.txt`.
+   - Runs a WebSocket server (port 8765) and broadcasts JSON payloads.
+3. **Web Client (`client/`)**: 
+   - Client manually enters the RPi's IP address. 
+   - UI connects via WebSockets and manipulates SVG/CSS transforms to simulate a robot HUD (white theme).
+
+## Project Progress
+- [x] Wiped previous stale branch state.
+- [x] Initialized architecture and pushed to `PID` branch.
+- [x] Integrated MPU9250 telemetry stack (Arduino -> DB/Server -> UI).
 
 ## Future Capabilities
 - Add dual-mode USB Web Serial / Network connectivity.
