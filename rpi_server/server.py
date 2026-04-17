@@ -23,7 +23,14 @@ def serial_reader():
                 line = ser.readline().decode('utf-8').strip()
                 # Extremely primitive validation of JSON structure
                 if line.startswith('{') and line.endswith('}'):
-                    latest_data = line
+                    try:
+                        parsed = json.loads(line)
+                        if 'yaw' in parsed:
+                            latest_data = line
+                        else:
+                            print(f"[SERIAL] {line}")
+                    except json.JSONDecodeError:
+                        pass
     except serial.SerialException as e:
         print(f"[SERIAL] Error: {e}")
         print("[SERIAL] Will run with dummy data for testing.")
