@@ -109,6 +109,10 @@ button:hover {
     padding-bottom: 8px;
 }
 
+.data-item.heading-item {
+    gap: 8px;
+}
+
 .data-item .label {
     font-weight: 600;
     color: #475569;
@@ -119,6 +123,14 @@ button:hover {
     font-family: 'Share Tech Mono', monospace;
     font-size: 1.2rem;
     color: var(--text-mono);
+}
+
+.data-item .value.cardinal {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--accent);
+    min-width: 40px;
+    text-align: center;
 }
 
 /* Main HUD Area */
@@ -201,22 +213,37 @@ button:hover {
     position: absolute;
     bottom: 40px;
     width: 400px;
-    height: 80px;
+    height: 110px;
     z-index: 5;
     display: flex;
     flex-direction: column;
     align-items: center;
 }
 
+.heading-display {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.heading-cardinal {
+    font-family: 'Inter', sans-serif;
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--hud-color);
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px rgba(5, 150, 105, 0.3);
+}
+
 .heading-value {
     font-family: 'Share Tech Mono', monospace;
-    font-size: 24px;
+    font-size: 22px;
     color: var(--hud-color);
     background: rgba(255, 255, 255, 0.8);
     padding: 4px 12px;
     border: 1px solid var(--hud-color);
     border-radius: 4px;
-    margin-bottom: 20px;
     box-shadow: 0 0 10px rgba(5, 150, 105, 0.2);
 }
 

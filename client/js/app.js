@@ -7,10 +7,30 @@ const statusIndicator = document.getElementById('statusIndicator');
 const valYaw = document.getElementById('valYaw');
 const valPitch = document.getElementById('valPitch');
 const valRoll = document.getElementById('valRoll');
+const valCardinal = document.getElementById('valCardinal');
 
 const horizonGroup = document.getElementById('horizonGroup');
 const hudYawValue = document.getElementById('hudYawValue');
+const hudCardinalDir = document.getElementById('hudCardinalDir');
 const compassDial = document.getElementById('compassDial');
+
+/**
+ * Convert a 0-360 compass heading to a 16-point cardinal direction string.
+ * e.g. 0 → N, 45 → NE, 90 → E, 135 → SE, 180 → S, 225 → SW, 270 → W, 315 → NW
+ */
+function headingToCardinal(heading) {
+    // Normalize to 0-360
+    heading = ((heading % 360) + 360) % 360;
+
+    const directions = [
+        'N', 'NNE', 'NE', 'ENE',
+        'E', 'ESE', 'SE', 'SSE',
+        'S', 'SSW', 'SW', 'WSW',
+        'W', 'WNW', 'NW', 'NNW'
+    ];
+    const index = Math.round(heading / 22.5) % 16;
+    return directions[index];
+}
 
 // Initialize Compass Dial
 const dialInner = document.createElement('div');
@@ -24,7 +44,7 @@ for (let i = 0; i < 360; i++) {
         tick.classList.add('major');
         const label = document.createElement('div');
         label.className = 'tick-label';
-        // Add NSEW labels if needed
+        // Add NSEW labels
         if(i === 0) label.innerText = 'N';
         else if (i === 90) label.innerText = 'E';
         else if (i === 180) label.innerText = 'S';
@@ -91,16 +111,21 @@ function updateUI(yaw, pitch, roll) {
     if(pitch == undefined) pitch = 0;
     if(roll == undefined) roll = 0;
 
-    // Update Text Data Box
-    valYaw.innerText = yaw.toFixed(2) + '°';
-    valPitch.innerText = pitch.toFixed(2) + '°';
-    valRoll.innerText = roll.toFixed(2) + '°';
+    // Compute cardinal direction from absolute heading
+    const cardinal = headingToCardinal(yaw);
 
-    // Update HUD Text
-    hudYawValue.innerText = yaw.toFixed(2).padStart(6, '0');
+    // Update Text Data Box
+    valYaw.innerText = yaw.toFixed(1) + '°';
+    valPitch.innerText = pitch.toFixed(1) + '°';
+    valRoll.innerText = roll.toFixed(1) + '°';
+    if (valCardinal) valCardinal.innerText = cardinal;
+
+    // Update HUD heading display
+    hudYawValue.innerText = yaw.toFixed(1).padStart(5, '0') + '°';
+    if (hudCardinalDir) hudCardinalDir.innerText = cardinal;
 
     // Update Artificial Horizon
-    // Pitch moves the horizon up and down (e.g. 1 degree = 2 pixels)
+    // Pitch moves the horizon up and down (e.g. 1 degree = 4 pixels)
     const pitchTranslate = pitch * 4; 
     // Roll rotates the whole group
     horizonGroup.style.transform = `rotate(${-roll}deg) translateY(${pitchTranslate}px)`;
@@ -108,8 +133,6 @@ function updateUI(yaw, pitch, roll) {
     // Update Compass Dial
     // We want the current 'yaw' tick to be in the center
     // dial width is 400px. center is 200px.
-    // 0 yaw means left edge is at center -> need to offset by center.
-    // the total width of one 360 loop is compassDialWidth.
     const centerOffset = 400 / 2; 
     let translateX = centerOffset - (yaw * TICK_WIDTH) - (TICK_WIDTH/2);
     

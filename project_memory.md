@@ -12,7 +12,9 @@ The system uses an **Arduino** hooked up to an **MPU9250 IMU** to capture high-s
 ## Current Architecture
 1. **Arduino (`arduino/imu_telemetry/`)**: 
    - Uses the **Hideaki Tai MPU9250** library (optimized for 8-bit AVR boards like Mega 2560).
-   - Captures MPU9250 orientation and prints `{"yaw": 123.45, "pitch": ..., "roll": ...}` over Serial @ 115200 baud.
+   - **Heading (Yaw)**: Computed via **tilt-compensated magnetometer** heading — gives absolute compass direction (N/E/S/W) that updates even when stationary. The Madgwick filter's gyro-based yaw is NOT used for heading.
+   - **Pitch & Roll**: Computed via the **Madgwick filter** for smooth, responsive values.
+   - Outputs `{"yaw": 123.45, "pitch": ..., "roll": ...}` over Serial @ 115200 baud (yaw = compass heading 0-360°).
 2. **RPi Server (`rpi_server/`)**: 
    - Python script reads Serial data. 
    - Uses a virtual environment: `python3 -m venv venv`, `source venv/bin/activate`, `pip install -r requirements.txt`.
@@ -20,11 +22,13 @@ The system uses an **Arduino** hooked up to an **MPU9250 IMU** to capture high-s
 3. **Web Client (`client/`)**: 
    - Client manually enters the RPi's IP address. 
    - UI connects via WebSockets and manipulates SVG/CSS transforms to simulate a robot HUD (white theme).
+   - Displays 16-point cardinal direction (N, NNE, NE, ENE, E, ...) derived from the 0-360° heading.
 
 ## Project Progress
 - [x] Wiped previous stale branch state.
 - [x] Initialized architecture and pushed to `PID` branch.
 - [x] Integrated MPU9250 telemetry stack (Arduino -> DB/Server -> UI).
+- [x] Switched yaw from Madgwick gyro-fusion to tilt-compensated magnetometer heading for absolute compass direction.
 
 ## Future Capabilities
 - Add dual-mode USB Web Serial / Network connectivity.
