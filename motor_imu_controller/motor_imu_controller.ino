@@ -7,16 +7,40 @@ const int LEFT_RPWM = 5,  LEFT_LPWM = 6,  LEFT_R_EN = 7,  LEFT_L_EN = 8;
 // ── RIGHT Motor (M2)
 const int RIGHT_RPWM = 9, RIGHT_LPWM = 10, RIGHT_R_EN = 11, RIGHT_L_EN = 12;
 
+// ── PLOTTER Motor (M3)
+const int PLOTTER_RPWM = 44, PLOTTER_LPWM = 45, PLOTTER_R_EN = 46, PLOTTER_L_EN = 47;
+
 const int RAMP_STEPS = 50;
 const unsigned long RAMP_TIME = 800;
 
 // ── Differential drive kinematics (for EKF Pure Pursuit CMD)
-const float WHEEL_TRACK    = 0.60;  // meters between wheel contact patches
-const float HALF_TRACK     = WHEEL_TRACK / 2.0;  // 0.30 m
+const float WHEEL_TRACK    = 0.57;  // meters between wheel contact patches
+const float HALF_TRACK     = WHEEL_TRACK / 2.0;  // 0.285 m
 const float MAX_LINEAR_MS  = 1.0;   // m/s at PWM=255 (calibrate per robot)
 const float PWM_PER_MS     = 255.0 / MAX_LINEAR_MS;
-const float WHEEL_RADIUS_M = 0.05;  // wheel radius in meters (verify by measurement)
+const float WHEEL_RADIUS_M = 0.16;  // wheel radius in meters
 const float TICKS_PER_REV  = 600.0; // encoder ticks per revolution (verify by measurement)
+
+// ── Heading Correction PID (Encoder-based)
+float headingKp = 50.0;
+float headingKi = 0.5;
+float headingKd = 1.0;
+float headingMaxCorrection = 50.0;
+
+bool headingCorrectionEnabled = false;
+unsigned long lastHeadingTick = 0;
+const unsigned long HEADING_INTERVAL_MS = 20;
+
+float headingTargetRad = 0.0;
+float headingIntegral = 0.0;
+float headingPrevError = 0.0;
+int headingPwmCorrection = 0;
+
+long headingStartEnc1 = 0;
+long headingStartEnc2 = 0;
+
+void enableHeadingCorrection(float targetRad = 0.0);
+void disableHeadingCorrection();
 
 // ── Wheel PID control (closed-loop speed control for CMD,v,omega)
 const unsigned long PID_INTERVAL_MS = 20;  // 50 Hz
@@ -94,6 +118,94 @@ void disablePidControl();
 void setPidTargets(float leftMs, float rightMs);
 bool pidTick();
 
+// ---------- Plotting Mechanism ----------
+enum PlottingMode { PLOT_CONTINUOUS, PLOT_DASHED };
+PlottingMode plottingMode = PLOT_CONTINUOUS;
+bool plottingMotorsOn = true;
+unsigned long lastPlottingToggle = 0;
+const unsigned long PLOTTING_TOGGLE_MS = 2000;
+
+int latched_L_LPWM = 0, latched_L_RPWM = 0;
+int latched_R_LPWM = 0, latched_R_RPWM = 0;
+
+void applyPwmToHardware(int l_l, int l_r, int r_l, int r_r) {
+  int final_l_l = l_l;
+  int final_l_r = l_r;
+  int final_r_l = r_l;
+  int final_r_r = r_r;
+
+  if (headingCorrectionEnabled) {
+    bool isForward = (l_r > 0 || r_r > 0) && (l_l == 0 && r_l == 0);
+    bool isBackward = (l_l > 0 || r_l > 0) && (l_r == 0 && r_r == 0);
+
+    if (isForward) {
+      final_l_r = constrain(l_r - headingPwmCorrection, 0, 255);
+      final_r_r = constrain(r_r + headingPwmCorrection, 0, 255);
+    } else if (isBackward) {
+      final_l_l = constrain(l_l + headingPwmCorrection, 0, 255);
+      final_r_l = constrain(r_l - headingPwmCorrection, 0, 255);
+    }
+  }
+
+  analogWrite(LEFT_LPWM, final_l_l);
+  analogWrite(LEFT_RPWM, final_l_r);
+  analogWrite(RIGHT_LPWM, final_r_l);
+  analogWrite(RIGHT_RPWM, final_r_r);
+}
+
+// Wrapper for drive motors handling the plotting mode dashed logic
+void setMotorPwm(int l_l, int l_r, int r_l, int r_r) {
+  latched_L_LPWM = l_l;
+  latched_L_RPWM = l_r;
+  latched_R_LPWM = r_l;
+  latched_R_RPWM = r_r;
+  
+  if (plottingMode == PLOT_DASHED && !plottingMotorsOn) {
+    applyPwmToHardware(0, 0, 0, 0);
+  } else {
+    applyPwmToHardware(l_l, l_r, r_l, r_r);
+  }
+}
+
+// Wrapper for the independent plotting mechanism actuator
+void setPlotterPwm(int power) {
+  analogWrite(PLOTTER_LPWM, 0);
+  analogWrite(PLOTTER_RPWM, power);
+}
+
+void plottingTick() {
+  bool isMoving = (latched_L_LPWM > 0 || latched_L_RPWM > 0 || latched_R_LPWM > 0 || latched_R_RPWM > 0);
+
+  if (plottingMode == PLOT_CONTINUOUS) {
+    if (!plottingMotorsOn) {
+      plottingMotorsOn = true;
+      applyPwmToHardware(latched_L_LPWM, latched_L_RPWM, latched_R_LPWM, latched_R_RPWM);
+    }
+    // Plotter only sprays when robot is physically directed to move
+    if (isMoving) setPlotterPwm(255);
+    else setPlotterPwm(0);
+    return;
+  }
+  
+  unsigned long now = millis();
+  if (now - lastPlottingToggle >= PLOTTING_TOGGLE_MS) {
+    lastPlottingToggle = now;
+    plottingMotorsOn = !plottingMotorsOn;
+    if (plottingMotorsOn) {
+      applyPwmToHardware(latched_L_LPWM, latched_L_RPWM, latched_R_LPWM, latched_R_RPWM);
+    } else {
+      applyPwmToHardware(0, 0, 0, 0);
+    }
+  }
+
+  // During dashed mode, the plotter syncs with the dashed drive timer AND robot movement
+  if (plottingMotorsOn && isMoving) {
+    setPlotterPwm(255);
+  } else {
+    setPlotterPwm(0);
+  }
+}
+
 // ---------- Encoder ISRs ----------
 void ISR_encoder1() {
   if (digitalRead(ENC1_B) == HIGH) { encoder1_count++; }
@@ -108,8 +220,8 @@ void ISR_encoder2() {
 // ---------- Motor primitives ----------
 void emergencyStop() {
   disablePidControl();
-  analogWrite(LEFT_RPWM, 0);  analogWrite(LEFT_LPWM, 0);
-  analogWrite(RIGHT_RPWM, 0); analogWrite(RIGHT_LPWM, 0);
+  disableHeadingCorrection();
+  setMotorPwm(0, 0, 0, 0);
   currentSpeed = 0;
   currentDir = 0;
   // Reset all state machines
@@ -120,8 +232,8 @@ void emergencyStop() {
 
 void stopMotors() {
   disablePidControl();
-  analogWrite(LEFT_RPWM, 0);  analogWrite(LEFT_LPWM, 0);
-  analogWrite(RIGHT_RPWM, 0); analogWrite(RIGHT_LPWM, 0);
+  disableHeadingCorrection();
+  setMotorPwm(0, 0, 0, 0);
   currentSpeed = 0;
   currentDir = 0;
   turnState = TURN_IDLE;
@@ -130,38 +242,32 @@ void stopMotors() {
 }
 
 void setForward(int speed) {
-  analogWrite(LEFT_LPWM, 0);      analogWrite(RIGHT_LPWM, 0);
-  analogWrite(LEFT_RPWM, speed);  analogWrite(RIGHT_RPWM, speed);
+  setMotorPwm(0, speed, 0, speed);
 }
 
 void setBackward(int speed) {
-  analogWrite(LEFT_RPWM, 0);      analogWrite(RIGHT_RPWM, 0);
-  analogWrite(LEFT_LPWM, speed);  analogWrite(RIGHT_LPWM, speed);
+  setMotorPwm(speed, 0, speed, 0);
 }
 
 // Independent wheel control for differential drive (EKF Pure Pursuit)
 void setForwardDiff(int leftSpeed, int rightSpeed) {
   leftSpeed  = constrain(leftSpeed, 0, 255);
   rightSpeed = constrain(rightSpeed, 0, 255);
-  analogWrite(LEFT_LPWM, 0);       analogWrite(RIGHT_LPWM, 0);
-  analogWrite(LEFT_RPWM, leftSpeed);  analogWrite(RIGHT_RPWM, rightSpeed);
+  setMotorPwm(0, leftSpeed, 0, rightSpeed);
 }
 
 void setBackwardDiff(int leftSpeed, int rightSpeed) {
   leftSpeed  = constrain(leftSpeed, 0, 255);
   rightSpeed = constrain(rightSpeed, 0, 255);
-  analogWrite(LEFT_RPWM, 0);       analogWrite(RIGHT_RPWM, 0);
-  analogWrite(LEFT_LPWM, leftSpeed);  analogWrite(RIGHT_LPWM, rightSpeed);
+  setMotorPwm(leftSpeed, 0, rightSpeed, 0);
 }
 
 void spinRight(int speed) {
-  analogWrite(LEFT_LPWM, 0);     analogWrite(LEFT_RPWM, speed);
-  analogWrite(RIGHT_RPWM, 0);    analogWrite(RIGHT_LPWM, speed);
+  setMotorPwm(0, speed, speed, 0);
 }
 
 void spinLeft(int speed) {
-  analogWrite(LEFT_RPWM, 0);     analogWrite(LEFT_LPWM, speed);
-  analogWrite(RIGHT_LPWM, 0);    analogWrite(RIGHT_RPWM, speed);
+  setMotorPwm(speed, 0, 0, speed);
 }
 
 // ---------- Wheel PID helpers ----------
@@ -240,11 +346,9 @@ void applySignedWheelPwm(int leftPwm, int rightPwm, bool leftForward, bool right
   }
 
   if (leftForward && !rightForward) {
-    analogWrite(LEFT_LPWM, 0);   analogWrite(LEFT_RPWM, leftPwm);
-    analogWrite(RIGHT_RPWM, 0);  analogWrite(RIGHT_LPWM, rightPwm);
+    setMotorPwm(0, leftPwm, rightPwm, 0);
   } else {
-    analogWrite(LEFT_RPWM, 0);   analogWrite(LEFT_LPWM, leftPwm);
-    analogWrite(RIGHT_LPWM, 0);  analogWrite(RIGHT_RPWM, rightPwm);
+    setMotorPwm(leftPwm, 0, 0, rightPwm);
   }
   currentDir = 0;
 }
@@ -286,6 +390,85 @@ bool pidTick() {
   applySignedWheelPwm(leftPwm, rightPwm, leftForward, rightForward);
   currentSpeed = max(leftPwm, rightPwm);
   return true;
+}
+
+// ---------- Heading PID functions ----------
+void enableHeadingCorrection(float targetRad) {
+  noInterrupts();
+  headingStartEnc1 = encoder1_count;
+  headingStartEnc2 = encoder2_count;
+  interrupts();
+  headingTargetRad = targetRad;
+  headingIntegral = 0.0;
+  headingPrevError = 0.0;
+  headingPwmCorrection = 0;
+  lastHeadingTick = millis();
+  headingCorrectionEnabled = true;
+  Serial.println("Heading correction enabled.");
+}
+
+void disableHeadingCorrection() {
+  headingCorrectionEnabled = false;
+  headingPwmCorrection = 0;
+}
+
+void headingCorrectionTick() {
+  if (!headingCorrectionEnabled) return;
+  
+  unsigned long now = millis();
+  if (now - lastHeadingTick < HEADING_INTERVAL_MS) return;
+  float dtSec = (now - lastHeadingTick) / 1000.0;
+  if (dtSec <= 0.0) return;
+  lastHeadingTick = now;
+
+  noInterrupts();
+  long c1 = encoder1_count;
+  long c2 = encoder2_count;
+  interrupts();
+
+  long ticks_L = c1 - headingStartEnc1;
+  long ticks_R = c2 - headingStartEnc2;
+
+  float SL = ((float)ticks_L / TICKS_PER_REV) * 2.0 * PI * WHEEL_RADIUS_M;
+  float SR = ((float)ticks_R / TICKS_PER_REV) * 2.0 * PI * WHEEL_RADIUS_M;
+
+  float currentDeviation = (SR - SL) / WHEEL_TRACK;
+  float error = headingTargetRad - currentDeviation;
+
+  headingIntegral += error * dtSec;
+  if (headingIntegral > 5.0) headingIntegral = 5.0;
+  if (headingIntegral < -5.0) headingIntegral = -5.0;
+
+  float derivative = (error - headingPrevError) / dtSec;
+  headingPrevError = error;
+
+  float correction = (headingKp * error) + (headingKi * headingIntegral) + (headingKd * derivative);
+  
+  if (correction > headingMaxCorrection) correction = headingMaxCorrection;
+  if (correction < -headingMaxCorrection) correction = -headingMaxCorrection;
+
+  headingPwmCorrection = (int)correction;
+
+  setMotorPwm(latched_L_LPWM, latched_L_RPWM, latched_R_LPWM, latched_R_RPWM);
+}
+
+// ---------- Encoder Heading helper ----------
+float getEncoderHeadingDeg() {
+  noInterrupts();
+  long c1 = encoder1_count;
+  long c2 = encoder2_count;
+  interrupts();
+  
+  float SL = ((float)c1 / TICKS_PER_REV) * 2.0 * PI * WHEEL_RADIUS_M;
+  float SR = ((float)c2 / TICKS_PER_REV) * 2.0 * PI * WHEEL_RADIUS_M;
+  
+  float rad = (SR - SL) / WHEEL_TRACK;
+  float deg = rad * 180.0 / PI;
+  
+  while (deg < 0) deg += 360.0;
+  while (deg >= 360.0) deg -= 360.0;
+  
+  return deg;
 }
 
 // ---------- IMU helpers ----------
@@ -367,8 +550,8 @@ bool turnTick() {
 
     case TURN_SETTLE:
       if (now - turnStepStart >= 150) {
-        float startH = readHeadingDeg();
-        Serial.print("Turn start heading: "); Serial.println(startH);
+        float startH = getEncoderHeadingDeg();
+        Serial.print("Turn start heading (Enc): "); Serial.println(startH);
         Serial.print("Turn target heading: "); Serial.println(turnTargetDeg);
         turnState      = TURN_SPINNING;
         turnSpinStart  = millis();
@@ -383,10 +566,10 @@ bool turnTick() {
       if (now - turnLastCheck < 10) return true;
       turnLastCheck = now;
 
-      float nowH = readHeadingDeg();
+      float nowH = getEncoderHeadingDeg();
       if (abs(angleDiffDeg(nowH, turnTargetDeg)) <= TURN_HEADING_TOL) {
         stopMotors();
-        Serial.print("Turn complete. End heading: "); Serial.println(readHeadingDeg());
+        Serial.print("Turn complete. End heading (Enc): "); Serial.println(getEncoderHeadingDeg());
         turnState = TURN_DONE;
         return false;
       }
@@ -438,6 +621,7 @@ bool rampTick() {
 // dir: +1 right(cw), -1 left(ccw)
 void startTurn(int dir, int speed) {
   disablePidControl();
+  disableHeadingCorrection();
 
   if (speed < 1) speed = 120;
 
@@ -445,7 +629,7 @@ void startTurn(int dir, int speed) {
   turnSpeed = speed;
 
   // Calculate relative target heading: ±90° from current
-  float currentH = readHeadingDeg();
+  float currentH = getEncoderHeadingDeg();
   turnTargetDeg = currentH + (dir * 90.0);
   if (turnTargetDeg >= 360.0) turnTargetDeg -= 360.0;
   if (turnTargetDeg < 0.0)    turnTargetDeg += 360.0;
@@ -488,11 +672,67 @@ void handleCommand(String cmd) {
     // Cancel any active turn or ramp
     turnState = TURN_IDLE;
     rampState = RAMP_IDLE;
+    disableHeadingCorrection();
     setPidTargets(v_left, v_right);
     return;
   }
 
   cmd.toUpperCase();
+
+  // Plotting control
+  if (cmd == "P0") {
+    plottingMode = PLOT_CONTINUOUS;
+    Serial.println("Plotting mode: CONTINUOUS");
+    return;
+  }
+  if (cmd == "P1") {
+    plottingMode = PLOT_DASHED;
+    lastPlottingToggle = millis();
+    plottingMotorsOn = true;
+    Serial.println("Plotting mode: DASHED");
+    return;
+  }
+
+  // HEADING_ON
+  if (cmd == "HEADING_ON") {
+    enableHeadingCorrection(0.0);
+    return;
+  }
+  
+  // HEADING_OFF
+  if (cmd == "HEADING_OFF") {
+    disableHeadingCorrection();
+    Serial.println("Heading correction disabled.");
+    return;
+  }
+
+  // SET_HEADING_PID <kp> <ki> <kd> [max_correction]
+  if (cmd.startsWith("SET_HEADING_PID ")) {
+    int firstSpace = cmd.indexOf(' ');
+    int secondSpace = cmd.indexOf(' ', firstSpace + 1);
+    int thirdSpace = cmd.indexOf(' ', secondSpace + 1);
+    int fourthSpace = cmd.indexOf(' ', thirdSpace + 1);
+    
+    if (firstSpace > 0 && secondSpace > 0 && thirdSpace > 0) {
+      headingKp = cmd.substring(firstSpace + 1, secondSpace).toFloat();
+      headingKi = cmd.substring(secondSpace + 1, thirdSpace).toFloat();
+      
+      if (fourthSpace > 0) {
+        headingKd = cmd.substring(thirdSpace + 1, fourthSpace).toFloat();
+        headingMaxCorrection = cmd.substring(fourthSpace + 1).toFloat();
+      } else {
+        headingKd = cmd.substring(thirdSpace + 1).toFloat();
+      }
+      
+      Serial.print("Heading PID updated: Kp="); Serial.print(headingKp);
+      Serial.print(" Ki="); Serial.print(headingKi);
+      Serial.print(" Kd="); Serial.print(headingKd);
+      Serial.print(" MaxCorr="); Serial.println(headingMaxCorrection);
+    } else {
+      Serial.println("ERROR: Format is SET_HEADING_PID <kp> <ki> <kd> [max_correction]");
+    }
+    return;
+  }
 
   // Emergency stop — always works, even mid-turn
   if (cmd == "S") {
@@ -588,6 +828,8 @@ void handleCommand(String cmd) {
     rampStep  = 0;
     rampStepStart = millis();
     rampState = RAMP_RAMPING;
+    
+    enableHeadingCorrection(0.0);
     return;
   }
 
@@ -620,6 +862,8 @@ void handleCommand(String cmd) {
   Serial.println("  SET_SPEED <0-255>");
   Serial.println("  TURN_LEFT_90 <1-255>");
   Serial.println("  TURN_RIGHT_90 <1-255>");
+  Serial.println("  HEADING_ON | HEADING_OFF");
+  Serial.println("  SET_HEADING_PID <kp> <ki> <kd> [max_correction]");
   Serial.println("  STOP | S");
   Serial.println("  CMD,<v_m/s>,<omega_rad/s>  — Pure Pursuit differential drive");
   Serial.println("  IMU_STREAM [interval_ms]");
@@ -671,6 +915,9 @@ void setup() {
 }
 
 void loop() {
+  // ── Plotting Mechanism update
+  plottingTick();
+
   // ── Non-blocking IMU streaming
   if (imuStreaming) {
     unsigned long now = millis();
@@ -688,6 +935,9 @@ void loop() {
 
   // ── Wheel PID control (CMD,v,omega)
   pidTick();
+
+  // ── Heading Correction PID (Encoder-based)
+  headingCorrectionTick();
 
   // ── Serial command handling (always runs — even during turns)
   if (Serial.available()) {

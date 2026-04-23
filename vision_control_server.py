@@ -377,6 +377,35 @@ canvas{{display:block;width:100%;border-radius:6px;margin-top:6px;background:#0a
     <div id="log">—</div>
   </div>
 
+  <!-- Plotting Panel -->
+  <div class="card">
+    <h3>Plotting Mechanism</h3>
+    <div class="imu-controls" style="margin-top:10px">
+      <select id="plotMode">
+        <option value="continuous">Continuous Plotting</option>
+        <option value="dashed">Dashed Plotting (2s ON/OFF)</option>
+      </select>
+      <button onclick="setPlotting()" style="background:#123;color:#6af">Set Mode</button>
+    </div>
+    <div style="font-size:.8rem;color:#777;margin-top:6px" id="plotLog">Mode: Continuous</div>
+  </div>
+
+  <!-- PID Heading Control Panel -->
+  <div class="card">
+    <h3>PID Heading Control</h3>
+    <div class="imu-grid" style="margin-top:10px; grid-template-columns: repeat(4, 1fr);">
+      <div class="imu-cell"><div class="label">Kp</div><input type="number" id="pid_kp" value="50.0" step="0.1" style="width:100%; background:#223; color:#aaf; border:none; padding:4px; text-align:center; border-radius:4px; box-sizing:border-box;"></div>
+      <div class="imu-cell"><div class="label">Ki</div><input type="number" id="pid_ki" value="0.5" step="0.1" style="width:100%; background:#223; color:#aaf; border:none; padding:4px; text-align:center; border-radius:4px; box-sizing:border-box;"></div>
+      <div class="imu-cell"><div class="label">Kd</div><input type="number" id="pid_kd" value="1.0" step="0.1" style="width:100%; background:#223; color:#aaf; border:none; padding:4px; text-align:center; border-radius:4px; box-sizing:border-box;"></div>
+      <div class="imu-cell"><div class="label">Max Corr</div><input type="number" id="pid_max" value="50.0" step="1" style="width:100%; background:#223; color:#aaf; border:none; padding:4px; text-align:center; border-radius:4px; box-sizing:border-box;"></div>
+    </div>
+    <div class="imu-controls" style="margin-top:10px">
+      <button onclick="setHeadingPID()" style="background:#123;color:#6af">Set PID</button>
+      <button onclick="sendCmd('HEADING_ON')" style="background:#1a4a1a;color:#6f6">Heading ON</button>
+      <button onclick="sendCmd('HEADING_OFF')" style="background:#3a1a1a;color:#f66">Heading OFF</button>
+    </div>
+  </div>
+
   <!-- IMU Panel -->
   <div class="card">
     <h3>IMU Data (MPU-9250)</h3>
@@ -455,6 +484,37 @@ async function sendCmd(cmd, silent) {{
   }} catch(e) {{
     if (!silent) logEl.textContent = 'ERR: ' + e;
   }}
+}}
+
+// ── Plotting Mechanism commands
+async function setPlotting() {{
+  const mode = document.getElementById('plotMode').value;
+  const logEl = document.getElementById('plotLog');
+  logEl.textContent = 'Setting mode...';
+  try {{
+    const r = await fetch('/set_plotting_mode', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{mode: mode}})
+    }});
+    const j = await r.json();
+    if (j.ok) {{
+      logEl.textContent = 'Mode: ' + (mode === 'continuous' ? 'Continuous' : 'Dashed');
+    }} else {{
+      logEl.textContent = 'ERR: ' + (j.error || 'unknown');
+    }}
+  }} catch(e) {{
+    logEl.textContent = 'ERR: ' + e;
+  }}
+}}
+
+// ── PID Heading commands
+function setHeadingPID() {{
+  const kp = document.getElementById('pid_kp').value;
+  const ki = document.getElementById('pid_ki').value;
+  const kd = document.getElementById('pid_kd').value;
+  const max_corr = document.getElementById('pid_max').value;
+  sendCmd('SET_HEADING_PID ' + kp + ' ' + ki + ' ' + kd + ' ' + max_corr);
 }}
 
 // ── IMU commands
@@ -593,6 +653,41 @@ def cmd():
         s.write((c + "\n").encode("utf-8"))
         s.flush()
         return jsonify({"ok": True, "sent": c})
+    except Exception as e:
+        with ser_lock:
+            ser = None
+        log.warning(f"Serial write failed, port marked dead: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/set_plotting_mode", methods=["POST"])
+def set_plotting_mode():
+    global ser
+    data = request.get_json(silent=True) or {}
+    mode = str(data.get("mode", "")).strip().lower()
+    
+    if mode == "continuous":
+        c = "P0"
+    elif mode == "dashed":
+        c = "P1"
+    else:
+        return jsonify({"ok": False, "error": "invalid mode"}), 400
+        
+    with ser_lock:
+        s = ser
+    if s is None:
+        if not open_serial():
+            return jsonify({"ok": False, "error": "serial not connected"}), 503
+        with ser_lock:
+            s = ser
+
+    if s is None:
+        return jsonify({"ok": False, "error": "serial not connected"}), 503
+
+    try:
+        s.write((c + "\n").encode("utf-8"))
+        s.flush()
+        return jsonify({"ok": True, "sent": c, "mode": mode})
     except Exception as e:
         with ser_lock:
             ser = None
