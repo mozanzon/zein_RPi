@@ -7,8 +7,9 @@ import logging
 import signal
 import sys
 import queue
+import os
 
-from flask import Flask, Response, request, jsonify
+from flask import Flask, Response, request, jsonify, send_from_directory
 
 try:
     import serial
@@ -279,21 +280,70 @@ def index():
 <!doctype html><html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pi Stream + Control</title>
+<title>Autonomous Robot for Road Inspection and Maintenance</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/nipplejs/0.10.1/nipplejs.min.js"></script>
 <style>
+:root {{
+  --bg-color: #111;
+  --text-color: #eee;
+  --header-bg: #1a1a1a;
+  --header-border: #333;
+  --link-color: #65c3ff;
+  --card-bg: #1c1c1c;
+  --card-border: #2a2a2a;
+  --card-title: #888;
+  --btn-bg: #2a2a2a;
+  --btn-hover: #3a3a3a;
+  --imu-cell: #141414;
+  --imu-border: #252525;
+  --canvas-bg: #0a0a0a;
+}}
+:root.light-mode {{
+  --bg-color: #f0f0f0;
+  --text-color: #111;
+  --header-bg: #e0e0e0;
+  --header-border: #ccc;
+  --link-color: #0056b3;
+  --card-bg: #ffffff;
+  --card-border: #ddd;
+  --card-title: #555;
+  --btn-bg: #e0e0e0;
+  --btn-hover: #d0d0d0;
+  --imu-cell: #f8f8f8;
+  --imu-border: #eee;
+  --canvas-bg: #ffffff;
+}}
+
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#111;color:#eee;font-family:Arial,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh}}
-header{{width:100%;padding:12px 16px;background:#1a1a1a;border-bottom:1px solid #333;text-align:center}}
-header h2{{font-size:1.1rem;margin-bottom:4px}}
-header .links a{{color:#65c3ff;margin:0 6px;font-size:.85rem}}
-.main{{width:100%;max-width:820px;padding:12px}}
+body{{background:var(--bg-color);color:var(--text-color);font-family:Arial,sans-serif;display:flex;flex-direction:column;align-items:center;min-height:100vh;transition:background 0.3s, color 0.3s;}}
+header{{width:100%;padding:12px 16px;background:var(--header-bg);border-bottom:1px solid var(--header-border);text-align:center;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}}
+header > div.titles {{ flex-grow: 1; text-align: center; }}
+header h2{{font-size:1.4rem;margin-bottom:4px}}
+header .links a{{color:var(--link-color);margin:0 6px;font-size:.85rem}}
+header button.theme-toggle {{ background:var(--btn-bg); color:var(--text-color); border:1px solid var(--card-border); padding: 5px 10px; border-radius: 5px; cursor: pointer; }}
+.main{{width:100%;max-width:100%;padding:12px 20px}}
+
+/* Tabs */
+.tabs {{ display: flex; gap: 10px; margin-bottom: 12px; }}
+.tab-btn {{ flex: 1; padding: 10px; cursor: pointer; background: var(--btn-bg); color: var(--text-color); border: 1px solid var(--card-border); border-radius: 6px; font-weight: bold; }}
+.tab-btn.active {{ background: #4a9eff; color: #fff; border-color: #4a9eff; }}
+.tab-content {{ display: none; }}
+.tab-content.active {{ display: block; }}
 
 /* stream */
-.stream-wrap img{{width:100%;border:2px solid #333;border-radius:6px;display:block}}
+.stream-wrap img{{width:100%;border:2px solid var(--header-border);border-radius:6px;display:block;max-height: 80vh;object-fit: contain;}}
 
 /* controls card */
-.card{{background:#1c1c1c;border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-top:12px}}
-.card h3{{font-size:.85rem;color:#888;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}}
+.card{{background:var(--card-bg);border:1px solid var(--card-border);border-radius:8px;padding:12px;margin-top:12px}}
+.card h3{{font-size:.85rem;color:var(--card-title);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}}
+
+/* joystick / map */
+#joystick-zone {{ width: 100%; height: 200px; background: var(--imu-cell); border: 1px dashed var(--imu-border); border-radius: 8px; position: relative; margin-top: 10px; }}
+#map {{ height: 500px; width: 100%; border-radius: 8px; z-index: 1; }}
+.waypoint-list {{ max-height: 100px; overflow-y: auto; font-size: 0.8rem; margin-top: 10px; color: var(--card-title); }}
+.wp-btn {{ width: 100%; margin-top: 10px; padding: 10px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }}
 
 /* speed slider */
 .speed-row{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
@@ -305,9 +355,9 @@ header .links a{{color:#65c3ff;margin:0 6px;font-size:.85rem}}
 .btn-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}}
 .btn-grid button,.btn-row button{{
   font-size:.9rem;padding:10px 6px;border:none;border-radius:6px;
-  background:#2a2a2a;color:#eee;cursor:pointer;transition:background .15s
+  background:var(--btn-bg);color:var(--text-color);cursor:pointer;transition:background .15s
 }}
-.btn-grid button:hover,.btn-row button:hover{{background:#3a3a3a}}
+.btn-grid button:hover,.btn-row button:hover{{background:var(--btn-hover)}}
 .btn-fwd{{background:#1a4a1a!important;color:#6f6!important}}
 .btn-bwd{{background:#3a1a1a!important;color:#f66!important}}
 .btn-stop{{background:#2a2a00!important;color:#ff6!important}}
@@ -320,27 +370,50 @@ header .links a{{color:#65c3ff;margin:0 6px;font-size:.85rem}}
 
 /* IMU panel */
 .imu-grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:6px}}
-.imu-cell{{background:#141414;border:1px solid #252525;border-radius:6px;padding:8px;text-align:center}}
-.imu-cell .label{{font-size:.7rem;color:#666;margin-bottom:2px}}
+.imu-cell{{background:var(--imu-cell);border:1px solid var(--imu-border);border-radius:6px;padding:8px;text-align:center}}
+.imu-cell .label{{font-size:.7rem;color:var(--card-title);margin-bottom:2px}}
 .imu-cell .val{{font-size:1rem;font-weight:bold;color:#4af}}
-.imu-heading{{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:14px;padding:8px;background:#141414;border:1px solid #252525;border-radius:6px;margin-top:4px}}
-.imu-heading .label{{font-size:.75rem;color:#666}}
+.imu-heading{{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:14px;padding:8px;background:var(--imu-cell);border:1px solid var(--imu-border);border-radius:6px;margin-top:4px}}
+.imu-heading .label{{font-size:.75rem;color:var(--card-title)}}
 .imu-heading .val{{font-size:1.3rem;font-weight:bold;color:#fa4}}
 .imu-controls{{display:flex;gap:8px;margin-top:8px}}
 .imu-controls button{{flex:1;font-size:.8rem;padding:7px;border:none;border-radius:5px;background:#223;color:#aaf;cursor:pointer}}
 .imu-controls button:hover{{background:#334}}
 .imu-controls select{{flex:1;font-size:.8rem;padding:7px;border:none;border-radius:5px;background:#223;color:#aaf}}
-canvas{{display:block;width:100%;border-radius:6px;margin-top:6px;background:#0a0a0a}}
+canvas{{display:block;width:100%;border-radius:6px;margin-top:6px;background:var(--canvas-bg)}}
 </style>
 </head><body>
+<script>
+function toggleTheme() {{
+  document.documentElement.classList.toggle('light-mode');
+  const isLight = document.documentElement.classList.contains('light-mode');
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+}}
+window.onload = () => {{
+  if (localStorage.getItem('theme') === 'light') {{
+    document.documentElement.classList.add('light-mode');
+  }}
+}};
+</script>
 <header>
-  <h2>Pi Stream + Motor Control</h2>
-  <div style="font-size:.8rem;color:#666">{ip}:{PORT}</div>
-  <div class="links">
-    <a href="/stream" target="_blank">/stream</a>
-    <a href="/snapshot" target="_blank">/snapshot</a>
-    <a href="/imu" target="_blank">/imu (SSE)</a>
-    <a href="/status" target="_blank">/status</a>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+    <img src="/photos/Picture1.png" style="height: 50px; object-fit: contain;">
+    <img src="/photos/Picture3.png" style="height: 50px; object-fit: contain;">
+  </div>
+  <div class="titles">
+    <h2>Autonomous Robot for Road Inspection and Maintenance</h2>
+    <div style="font-size:.8rem;color:var(--card-title)">{ip}:{PORT}</div>
+    <div class="links">
+      <a href="/stream" target="_blank">/stream</a>
+      <a href="/snapshot" target="_blank">/snapshot</a>
+      <a href="/imu" target="_blank">/imu (SSE)</a>
+      <a href="/status" target="_blank">/status</a>
+    </div>
+  </div>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+    <img src="/photos/Picture4.png" style="height: 50px; object-fit: contain;">
+    <img src="/photos/Picture5.png" style="height: 50px; object-fit: contain;">
+    <button class="theme-toggle" onclick="toggleTheme()">☀️ / 🌙</button>
   </div>
 </header>
 
@@ -351,30 +424,54 @@ canvas{{display:block;width:100%;border-radius:6px;margin-top:6px;background:#0a
     <img src="/stream" alt="Live stream">
   </div>
 
-  <!-- Motor Controls -->
-  <div class="card">
-    <h3>Motor Control</h3>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('manual')">Manual Mode (Joystick)</button>
+    <button class="tab-btn" onclick="switchTab('auto')">Auto Mode (Map)</button>
+  </div>
 
-    <div class="speed-row">
-      <label>Speed</label>
-      <input type="range" id="spd" min="40" max="255" value="140"
-             oninput="onSpeedSlider(this.value)">
-      <span id="spdVal">140</span>
+  <!-- Manual Mode Content -->
+  <div id="manual-tab" class="tab-content active">
+    <!-- Motor Controls -->
+    <div class="card">
+      <h3>Motor Control</h3>
+
+      <div class="speed-row">
+        <label>Speed</label>
+        <input type="range" id="spd" min="40" max="255" value="140"
+               oninput="onSpeedSlider(this.value)">
+        <span id="spdVal">140</span>
+      </div>
+
+      <div id="joystick-zone" style="margin-bottom: 15px;"></div>
+
+      <div class="btn-grid">
+        <div></div>
+        <button class="btn-fwd" onclick="sendCmd('FORWARD '+spd())">▲ Forward</button>
+        <div></div>
+        <button onclick="sendCmd('TURN_LEFT_90 '+spd())">↺ Left 90°</button>
+        <button class="btn-stop" onclick="sendCmd('STOP')">■ Stop</button>
+        <button onclick="sendCmd('TURN_RIGHT_90 '+spd())">↻ Right 90°</button>
+        <div></div>
+        <button class="btn-bwd" onclick="sendCmd('BACKWARD '+spd())">▼ Backward</button>
+        <button class="btn-emg" onclick="sendCmd('S')">⚡ EMERGENCY</button>
+      </div>
+
+      <div id="log">—</div>
     </div>
+  </div>
 
-    <div class="btn-grid">
-      <div></div>
-      <button class="btn-fwd" onclick="sendCmd('FORWARD '+spd())">▲ Forward</button>
-      <div></div>
-      <button onclick="sendCmd('TURN_LEFT_90 '+spd())">↺ Left 90°</button>
-      <button class="btn-stop" onclick="sendCmd('STOP')">■ Stop</button>
-      <button onclick="sendCmd('TURN_RIGHT_90 '+spd())">↻ Right 90°</button>
-      <div></div>
-      <button class="btn-bwd" onclick="sendCmd('BACKWARD '+spd())">▼ Backward</button>
-      <button class="btn-emg" onclick="sendCmd('S')">⚡ EMERGENCY</button>
+  <!-- Auto Mode Content -->
+  <div id="auto-tab" class="tab-content">
+    <div class="card">
+      <h3>Automatic Navigation</h3>
+      <div id="map"></div>
+      <div class="waypoint-list">
+        <strong>Waypoints:</strong><br>
+        <div id="wp-list">None added yet. Click map to add.</div>
+      </div>
+      <button class="wp-btn" onclick="sendWaypoints()">Start Navigation</button>
+      <button class="wp-btn" style="background:#ff4444; margin-top:5px;" onclick="clearWaypoints()">Clear Map</button>
     </div>
-
-    <div id="log">—</div>
   </div>
 
   <!-- Plotting Panel -->
@@ -625,10 +722,143 @@ function drawAccelChart() {{
   ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid);
   ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
 }}
+
+// ── Tabs
+function switchTab(tabId) {{
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  
+  if (tabId === 'manual') {{
+    document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+    document.getElementById('manual-tab').classList.add('active');
+    if (!manager) setTimeout(initJoystick, 100);
+  }} else {{
+    document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+    document.getElementById('auto-tab').classList.add('active');
+    if (!map) setTimeout(initMap, 100);
+  }}
+}}
+
+// ── Joystick (Manual Mode)
+let manager = null;
+function initJoystick() {{
+  if (manager) return; // already initialized
+  const zone = document.getElementById('joystick-zone');
+  manager = nipplejs.create({{
+    zone: zone,
+    mode: 'static',
+    position: {{ left: '50%', top: '50%' }},
+    color: '#4a9eff',
+    size: 150
+  }});
+  
+  manager.on('move', (evt, data) => {{
+    const maxV = 1.0; 
+    const maxOmega = 3.14; 
+    
+    let r = data.distance / 75.0; // normalize distance radius (75px)
+    if (r > 1.0) r = 1.0;
+    const angleRad = data.angle.radian;
+    
+    // Joystick Y axis is reversed from math. sin(angleRad) is positive up.
+    let v = r * Math.sin(angleRad) * maxV;
+    let omega = r * Math.cos(angleRad) * maxOmega; // positive is right wheel, negative left wheel turning
+    
+    sendCmd(`CMD,${{v.toFixed(2)}},${{-(omega).toFixed(2)}}`, true);
+  }});
+  
+  manager.on('end', () => {{
+    sendCmd('CMD,0,0', true);
+  }});
+}}
+
+// ── Leaflet Map (Auto Mode)
+let map = null;
+let waypoints = [];
+let routePolyline = null;
+let markers = [];
+
+function initMap() {{
+  if (map) {{
+    map.invalidateSize();
+    return;
+  }}
+  map = L.map('map').setView([30.0444, 31.2357], 18); // Default CAIRO or arbitrary
+  L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+    maxZoom: 22,
+    attribution: '© OpenStreetMap'
+  }}).addTo(map);
+
+  routePolyline = L.polyline([], {{color: 'red'}}).addTo(map);
+
+  map.on('click', function(e) {{
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
+    waypoints.push({{lat: lat, lng: lng}});
+    const marker = L.marker([lat, lng]).addTo(map);
+    markers.push(marker);
+    routePolyline.addLatLng(e.latlng);
+    updateWaypointList();
+  }});
+}}
+
+function updateWaypointList() {{
+  const list = document.getElementById('wp-list');
+  if (waypoints.length === 0) {{
+    list.innerHTML = "None added yet. Click map to add.";
+    return;
+  }}
+  let html = "<ol style='margin-left: 20px; padding-left: 0;'>";
+  waypoints.forEach((wp) => {{
+    html += `<li>${{wp.lat.toFixed(5)}}, ${{wp.lng.toFixed(5)}}</li>`;
+  }});
+  html += "</ol>";
+  list.innerHTML = html;
+}}
+
+function clearWaypoints() {{
+  waypoints = [];
+  markers.forEach(m => map.removeLayer(m));
+  markers = [];
+  if (routePolyline) routePolyline.setLatLngs([]);
+  updateWaypointList();
+}}
+
+async function sendWaypoints() {{
+  if (waypoints.length === 0) {{
+    alert("Add some waypoints first!");
+    return;
+  }}
+  try {{
+    const r = await fetch('/waypoints', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{waypoints: waypoints}})
+    }});
+    const j = await r.json();
+    if (j.ok) {{
+      alert("Waypoints sent to robot backend!");
+    }} else {{
+      alert("Error sending waypoints: " + j.error);
+    }}
+  }} catch(e) {{
+    alert("Error: " + e);
+  }}
+}}
+
+// Initialize default tab after rendering
+window.addEventListener('DOMContentLoaded', () => {{
+  setTimeout(initJoystick, 200);
+}});
 </script>
 </body></html>
 """
 
+@app.route("/photos/<path:filename>")
+def serve_photos(filename):
+    # Serve images from the 'photos' directory
+    photos_dir = os.path.join(os.path.dirname(__file__), "photos")
+    return send_from_directory(photos_dir, filename)
 
 @app.route("/cmd", methods=["POST"])
 def cmd():
@@ -658,6 +888,22 @@ def cmd():
             ser = None
         log.warning(f"Serial write failed, port marked dead: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/waypoints", methods=["POST"])
+def receive_waypoints():
+    data = request.json or {}
+    waypoints = data.get("waypoints", [])
+    
+    log.info(f"Received {len(waypoints)} waypoints for Auto Mode.")
+    for i, wp in enumerate(waypoints):
+        log.info(f"  WP {i+1}: Lat={wp.get('lat')}, Lng={wp.get('lng')}")
+    
+    # Send mock response back, optionally we could queue logic to drive
+    # points using the same PID mechanisms the Arduino uses, if we had GPS.
+    if waypoints:
+        return jsonify({"ok": True, "count": len(waypoints)})
+    return jsonify({"ok": False, "error": "No waypoints provided"}), 400
 
 
 @app.route("/set_plotting_mode", methods=["POST"])
