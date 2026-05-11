@@ -6,15 +6,13 @@
 !.github/
 !.gitkeep
 
-# Allow Arduino folders
-!motor_compass_controller/
-!motor_compass_controller/**
-!motor_imu_controller/
-!motor_imu_controller/**
+# Allow Arduino folder
+!Arduino/
+!Arduino/**
 
 # Allow Bridge folder
-!pi_tcp_bridge/
-!pi_tcp_bridge/**
+!pi_bridge/
+!pi_bridge/**
 
 # Allow documentation
 !README.md
