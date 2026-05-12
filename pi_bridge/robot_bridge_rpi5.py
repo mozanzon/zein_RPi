@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Raspberry Pi 5 Bridge - Arduino Data & Camera Stream with AI Integration
-Connects Arduino via Serial, captures camera feed, runs YOLO AI model, 
+Raspberry Pi 5 Bridge - Arduino Data & Camera Stream
+Connects Arduino via Serial, captures camera feed, 
 and sends data to React app via WebSocket
 """
 
@@ -19,7 +19,6 @@ import cv2
 import numpy as np
 import serial
 import websockets
-from ultralytics import YOLO
 
 # ==================== LOGGING SETUP ====================
 logging.basicConfig(
@@ -202,67 +201,17 @@ class CameraCapture:
             self.cap.release()
 
 
-class AIModel:
-    """Handles AI inference with YOLOv8"""
-    
-    def __init__(self, model_path='yolov8n.pt', device=0):
-        self.model = None
-        self.model_path = model_path
-        self.device = device
-        self.confidence_threshold = 0.5
-        
-    def load(self):
-        """Load YOLO model"""
-        try:
-            self.model = YOLO(self.model_path)
-            logger.info(f"Loaded model: {self.model_path}")
-            return True
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            return False
-    
-    def detect(self, frame):
-        """Run detection on frame"""
-        if self.model is None or frame is None:
-            return None
-        
-        try:
-            results = self.model(frame, device=self.device, verbose=False)
-            detections = []
-            
-            for result in results:
-                for box in result.boxes:
-                    if box.conf[0] > self.confidence_threshold:
-                        detections.append({
-                            'class': int(box.cls[0]),
-                            'class_name': result.names[int(box.cls[0])],
-                            'confidence': float(box.conf[0]),
-                            'bbox': box.xyxy[0].tolist(),
-                        })
-            
-            return {
-                'timestamp': datetime.now().isoformat(),
-                'detections': detections,
-                'detection_count': len(detections)
-            }
-        except Exception as e:
-            logger.error(f"Inference error: {e}")
-            return None
-
-
 class RobotBridge:
     """Main bridge connecting all components"""
     
     def __init__(self, arduino_port='/dev/ttyUSB0', websocket_host='0.0.0.0', websocket_port=8765):
         self.arduino = ArduinoReader(arduino_port)
         self.camera = CameraCapture()
-        self.ai_model = AIModel()
         self.websocket_host = websocket_host
         self.websocket_port = websocket_port
         self.clients = set()
         self.running = False
         self.loop_fps = deque(maxlen=30)
-        self.inference_fps = deque(maxlen=30)
         
     def initialize(self):
         """Initialize all components"""
@@ -275,9 +224,6 @@ class RobotBridge:
         if not self.camera.initialize():
             logger.error("Failed to initialize camera")
             return False
-        
-        if not self.ai_model.load():
-            logger.warning("Failed to load AI model (continuing without inference)")
         
         self.arduino.start_reading()
         self.camera.start_capturing()
@@ -330,7 +276,7 @@ class RobotBridge:
             logger.error(f"Error handling message: {e}")
     
     async def broadcast_data(self):
-        """Broadcast sensor and AI data to all clients"""
+        """Broadcast sensor and data to all clients"""
         frame_count = 0
         frame_time = time.time()
         
@@ -341,15 +287,8 @@ class RobotBridge:
                 
                 # Capture and process frame
                 frame = self.camera.get_frame()
-                detections = None
-                inference_time = 0
                 
-                if frame is not None and self.ai_model.model:
-                    start_time = time.time()
-                    detections = self.ai_model.detect(frame)
-                    inference_time = (time.time() - start_time) * 1000
-                    self.inference_fps.append(1000 / inference_time if inference_time > 0 else 0)
-                    
+                if frame is not None:
                     # Encode frame
                     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
                     frame_base64 = base64.b64encode(buffer).decode()
@@ -360,12 +299,9 @@ class RobotBridge:
                 broadcast_data = {
                     'timestamp': datetime.now().isoformat(),
                     'arduino': arduino_data[-1]['parsed'] if arduino_data else None,
-                    'detections': detections,
-                    'inference_time_ms': inference_time,
                     'stats': {
                         'connected_clients': len(self.clients),
                         'loop_fps': sum(self.loop_fps) / len(self.loop_fps) if self.loop_fps else 0,
-                        'inference_fps': sum(self.inference_fps) / len(self.inference_fps) if self.inference_fps else 0,
                     }
                 }
                 
@@ -431,7 +367,6 @@ def main():
     parser.add_argument('--arduino-port', default='/dev/ttyUSB0', help='Arduino serial port')
     parser.add_argument('--host', default='0.0.0.0', help='WebSocket host')
     parser.add_argument('--port', type=int, default=8765, help='WebSocket port')
-    parser.add_argument('--model', default='yolov8n.pt', help='YOLO model path')
     parser.add_argument('--camera', type=int, default=0, help='Camera device ID')
     
     args = parser.parse_args()
@@ -442,7 +377,6 @@ def main():
         websocket_port=args.port
     )
     
-    bridge.ai_model.model_path = args.model
     bridge.camera.camera_id = args.camera
     
     asyncio.run(bridge.run())

@@ -7,11 +7,6 @@ websockets>=12.0
 opencv-python>=4.8.0  # Or opencv-contrib-python for RPi
 numpy>=1.26.0
 
-# AI/ML
-ultralytics>=8.0.0  # YOLOv8
-torch>=2.1.0  # PyTorch (RPi5 compatible)
-torchvision>=0.16.0
-
 # Optional: For better performance on RPi5
 scipy>=1.11.0
 Pillow>=10.0.0
