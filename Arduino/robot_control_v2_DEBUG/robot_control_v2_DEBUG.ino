@@ -35,64 +35,64 @@ void setup() {
   Serial.begin(115200);
   delay(500);  // Give serial monitor time to connect
   
-  Serial.println("\n========================================");
-  Serial.println("ROBOT CONTROL V2 - DEBUG MODE");
-  Serial.println("========================================");
-  Serial.println("[SETUP] Initializing...");
+  Serial.println(F("\n========================================"));
+  Serial.println(F("ROBOT CONTROL V2 - DEBUG MODE"));
+  Serial.println(F("========================================"));
+  Serial.println(F("[SETUP] Initializing..."));
   
   // Motor pin setup
-  Serial.println("[SETUP] Configuring motor pins...");
+  Serial.println(F("[SETUP] Configuring motor pins..."));
   pinMode(LEFT_RPWM, OUTPUT);  pinMode(LEFT_LPWM, OUTPUT);
   pinMode(LEFT_R_EN, OUTPUT);  pinMode(LEFT_L_EN, OUTPUT);
   pinMode(RIGHT_RPWM, OUTPUT); pinMode(RIGHT_LPWM, OUTPUT);
   pinMode(RIGHT_R_EN, OUTPUT); pinMode(RIGHT_L_EN, OUTPUT);
-  Serial.println("       ✓ Motor pins configured");
+  Serial.println(F("       ✓ Motor pins configured"));
 
   // Enable motors
-  Serial.println("[SETUP] Enabling motor drivers...");
+  Serial.println(F("[SETUP] Enabling motor drivers..."));
   digitalWrite(LEFT_R_EN, HIGH);  digitalWrite(LEFT_L_EN, HIGH);
   digitalWrite(RIGHT_R_EN, HIGH); digitalWrite(RIGHT_L_EN, HIGH);
-  Serial.println("       ✓ Motor drivers enabled");
+  Serial.println(F("       ✓ Motor drivers enabled"));
 
   // Encoder pin setup
-  Serial.println("[SETUP] Configuring encoder pins...");
+  Serial.println(F("[SETUP] Configuring encoder pins..."));
   pinMode(ENC1_A, INPUT);
   pinMode(ENC1_B, INPUT);
   pinMode(ENC2_A, INPUT);
   pinMode(ENC2_B, INPUT);
-  Serial.println("       ✓ Encoder pins configured");
+  Serial.println(F("       ✓ Encoder pins configured"));
 
   // Attach interrupts for encoders
-  Serial.println("[SETUP] Attaching encoder interrupts...");
+  Serial.println(F("[SETUP] Attaching encoder interrupts..."));
   attachInterrupt(digitalPinToInterrupt(ENC1_A), encoderISR1, CHANGE);
   attachInterrupt(digitalPinToInterrupt(ENC2_A), encoderISR2, CHANGE);
-  Serial.println("       ✓ Encoder interrupts attached");
+  Serial.println(F("       ✓ Encoder interrupts attached"));
 
   stopMotors();
-  Serial.println("[SETUP] Motors stopped (safe state)");
+  Serial.println(F("[SETUP] Motors stopped (safe state)"));
 
   // Compass setup
-  Serial.println("[SETUP] Initializing compass sensor...");
+  Serial.println(F("[SETUP] Initializing compass sensor..."));
   if(!mag.begin()) {
-    Serial.println("       ✗ ERROR: Compass not found!");
-    Serial.println("       Check I2C connections and sensor wiring");
+    Serial.println(F("       ✗ ERROR: Compass not found!"));
+    Serial.println(F("       Check I2C connections and sensor wiring"));
     while(1);
   }
-  Serial.println("       ✓ Compass initialized successfully");
+  Serial.println(F("       ✓ Compass initialized successfully"));
   
-  Serial.println("\n========================================");
-  Serial.println("READY: Arduino initialized successfully");
-  Serial.println("Baud Rate: 115200");
-  Serial.println("========================================\n");
+  Serial.println(F("\n========================================"));
+  Serial.println(F("READY: Arduino initialized successfully"));
+  Serial.println(F("Baud Rate: 115200"));
+  Serial.println(F("========================================\n"));
 }
 
 void loop() {
   // Read Serial Commands
   if (Serial.available()) {
     String cmd = Serial.readStringUntil('\n');
-    Serial.print("[COMMAND] Received: '");
+    Serial.print(F("[COMMAND] Received: '"));
     Serial.print(cmd);
-    Serial.println("'");
+    Serial.println(F("'"));
     handleCommand(cmd);
   }
 
@@ -121,87 +121,87 @@ void sendCompassData() {
   
   float headingDegrees = heading * 180/M_PI;
 
-  Serial.print("[COMPASS] ");
-  Serial.print("X="); Serial.print(event.magnetic.x, 2); Serial.print(" | ");
-  Serial.print("Y="); Serial.print(event.magnetic.y, 2); Serial.print(" | ");
-  Serial.print("Z="); Serial.print(event.magnetic.z, 2); Serial.print(" | ");
-  Serial.print("Heading="); Serial.print(headingDegrees, 2); Serial.println("°");
+  Serial.print(F("[COMPASS] "));
+  Serial.print(F("X=")); Serial.print(event.magnetic.x, 2); Serial.print(F(" | "));
+  Serial.print(F("Y=")); Serial.print(event.magnetic.y, 2); Serial.print(F(" | "));
+  Serial.print(F("Z=")); Serial.print(event.magnetic.z, 2); Serial.print(F(" | "));
+  Serial.print(F("Heading=")); Serial.print(headingDegrees, 2); Serial.println(F("°"));
   
   // Also send in original format for compatibility
-  Serial.print("DATA:COMPASS|");
-  Serial.print("x="); Serial.print(event.magnetic.x, 2); Serial.print("|");
-  Serial.print("y="); Serial.print(event.magnetic.y, 2); Serial.print("|");
-  Serial.print("z="); Serial.print(event.magnetic.z, 2); Serial.print("|");
-  Serial.print("heading="); Serial.println(headingDegrees, 2);
+  Serial.print(F("DATA:COMPASS|"));
+  Serial.print(F("x=")); Serial.print(event.magnetic.x, 2); Serial.print(F("|"));
+  Serial.print(F("y=")); Serial.print(event.magnetic.y, 2); Serial.print(F("|"));
+  Serial.print(F("z=")); Serial.print(event.magnetic.z, 2); Serial.print(F("|"));
+  Serial.print(F("heading=")); Serial.println(headingDegrees, 2);
 }
 
 void sendEncoderData() {
-  Serial.print("[ENCODER] ");
-  Serial.print("E1="); Serial.print(encoder1Count); Serial.print(" | ");
-  Serial.print("E2="); Serial.print(encoder2Count); Serial.print(" | ");
-  Serial.print("L_Speed="); Serial.print(leftMotorSpeed); Serial.print(" | ");
-  Serial.print("R_Speed="); Serial.print(rightMotorSpeed); Serial.print(" | ");
-  Serial.print("L_Dir="); Serial.print(leftMotorDir); Serial.print(" | ");
-  Serial.print("R_Dir="); Serial.println(rightMotorDir);
+  Serial.print(F("[ENCODER] "));
+  Serial.print(F("E1=")); Serial.print(encoder1Count); Serial.print(F(" | "));
+  Serial.print(F("E2=")); Serial.print(encoder2Count); Serial.print(F(" | "));
+  Serial.print(F("L_Speed=")); Serial.print(leftMotorSpeed); Serial.print(F(" | "));
+  Serial.print(F("R_Speed=")); Serial.print(rightMotorSpeed); Serial.print(F(" | "));
+  Serial.print(F("L_Dir=")); Serial.print(leftMotorDir); Serial.print(F(" | "));
+  Serial.print(F("R_Dir=")); Serial.println(rightMotorDir);
   
   // Also send in original format for compatibility
-  Serial.print("DATA:ENCODER|");
-  Serial.print("e1="); Serial.print(encoder1Count); Serial.print("|");
-  Serial.print("e2="); Serial.print(encoder2Count); Serial.print("|");
-  Serial.print("lspeed="); Serial.print(leftMotorSpeed); Serial.print("|");
-  Serial.print("rspeed="); Serial.print(rightMotorSpeed); Serial.print("|");
-  Serial.print("ldir="); Serial.print(leftMotorDir); Serial.print("|");
-  Serial.print("rdir="); Serial.println(rightMotorDir);
+  Serial.print(F("DATA:ENCODER|"));
+  Serial.print(F("e1=")); Serial.print(encoder1Count); Serial.print(F("|"));
+  Serial.print(F("e2=")); Serial.print(encoder2Count); Serial.print(F("|"));
+  Serial.print(F("lspeed=")); Serial.print(leftMotorSpeed); Serial.print(F("|"));
+  Serial.print(F("rspeed=")); Serial.print(rightMotorSpeed); Serial.print(F("|"));
+  Serial.print(F("ldir=")); Serial.print(leftMotorDir); Serial.print(F("|"));
+  Serial.print(F("rdir=")); Serial.println(rightMotorDir);
 }
 
 void handleCommand(String cmd) {
   cmd.trim();
   
   if (cmd == "STOP" || cmd == "S") {
-    Serial.println("[ACTION] Stopping motors...");
+    Serial.println(F("[ACTION] Stopping motors..."));
     stopMotors();
-    Serial.println("   ✓ Motors stopped");
-    Serial.println("ACK:STOP");
+    Serial.println(F("   ✓ Motors stopped"));
+    Serial.println(F("ACK:STOP"));
   } 
   else if (cmd.startsWith("FORWARD ")) {
     int speed = cmd.substring(8).toInt();
-    Serial.print("[ACTION] Moving forward with speed: ");
+    Serial.print(F("[ACTION] Moving forward with speed: "));
     Serial.println(speed);
     setForward(speed);
-    Serial.print("ACK:FORWARD|speed="); Serial.println(speed);
+    Serial.print(F("ACK:FORWARD|speed=")); Serial.println(speed);
   }
   else if (cmd.startsWith("BACKWARD ")) {
     int speed = cmd.substring(9).toInt();
-    Serial.print("[ACTION] Moving backward with speed: ");
+    Serial.print(F("[ACTION] Moving backward with speed: "));
     Serial.println(speed);
     setBackward(speed);
-    Serial.print("ACK:BACKWARD|speed="); Serial.println(speed);
+    Serial.print(F("ACK:BACKWARD|speed=")); Serial.println(speed);
   }
   else if (cmd.startsWith("LEFT ")) {
     int speed = cmd.substring(5).toInt();
-    Serial.print("[ACTION] Spinning left with speed: ");
+    Serial.print(F("[ACTION] Spinning left with speed: "));
     Serial.println(speed);
     spinLeft(speed);
-    Serial.print("ACK:LEFT|speed="); Serial.println(speed);
+    Serial.print(F("ACK:LEFT|speed=")); Serial.println(speed);
   }
   else if (cmd.startsWith("RIGHT ")) {
     int speed = cmd.substring(6).toInt();
-    Serial.print("[ACTION] Spinning right with speed: ");
+    Serial.print(F("[ACTION] Spinning right with speed: "));
     Serial.println(speed);
     spinRight(speed);
-    Serial.print("ACK:RIGHT|speed="); Serial.println(speed);
+    Serial.print(F("ACK:RIGHT|speed=")); Serial.println(speed);
   }
   else if (cmd.startsWith("MOTOR ")) {
-    Serial.print("[ACTION] Setting individual motor speeds: ");
+    Serial.print(F("[ACTION] Setting individual motor speeds: "));
     Serial.println(cmd.substring(6));
     handleMotorCommand(cmd.substring(6));
   }
   else if (cmd == "STATUS") {
-    Serial.println("[REQUEST] Status requested");
+    Serial.println(F("[REQUEST] Status requested"));
     sendStatus();
   }
   else {
-    Serial.print("ERROR:Unknown_command|"); Serial.println(cmd);
+    Serial.print(F("ERROR:Unknown_command|")); Serial.println(cmd);
   }
   
   Serial.println();
@@ -213,22 +213,24 @@ void handleMotorCommand(String params) {
   int rIndex = params.indexOf('R');
   
   if (lIndex != -1 && rIndex != -1) {
-    String lSpeedStr = params.substring(lIndex + 1, rIndex).trim();
-    String rSpeedStr = params.substring(rIndex + 1).trim();
+    String lSpeedStr = params.substring(lIndex + 1, rIndex);
+    lSpeedStr.trim();
+    String rSpeedStr = params.substring(rIndex + 1);
+    rSpeedStr.trim();
     
     int lSpeed = lSpeedStr.toInt();
     int rSpeed = rSpeedStr.toInt();
     
-    Serial.print("   Left Motor: "); Serial.print(lSpeed);
-    Serial.print(" | Right Motor: "); Serial.println(rSpeed);
+    Serial.print(F("   Left Motor: ")); Serial.print(lSpeed);
+    Serial.print(F(" | Right Motor: ")); Serial.println(rSpeed);
     
     // Set motors independently
     setMotor(0, lSpeed);
     setMotor(1, rSpeed);
     
-    Serial.print("ACK:MOTOR|L="); Serial.print(lSpeed); Serial.print("|R="); Serial.println(rSpeed);
+    Serial.print(F("ACK:MOTOR|L=")); Serial.print(lSpeed); Serial.print(F("|R=")); Serial.println(rSpeed);
   } else {
-    Serial.println("[ERROR] Invalid motor command format. Use: MOTOR L <speed> R <speed>");
+    Serial.println(F("[ERROR] Invalid motor command format. Use: MOTOR L <speed> R <speed>"));
   }
 }
 
@@ -242,11 +244,11 @@ void setMotor(int motor, int speed) {
     leftMotorSpeed = abs(speed);
     leftMotorDir = (speed == 0) ? 0 : (speed > 0 ? 1 : -1);
     
-    Serial.print("   [MOTOR_SET] ");
+    Serial.print(F("   [MOTOR_SET] "));
     Serial.print(motorName);
-    Serial.print(" - Direction: ");
+    Serial.print(F(" - Direction: "));
     Serial.print(direction);
-    Serial.print(" | PWM Value: ");
+    Serial.print(F(" | PWM Value: "));
     Serial.println(speed);
     
     if (speed > 0) {
@@ -264,11 +266,11 @@ void setMotor(int motor, int speed) {
     rightMotorSpeed = abs(speed);
     rightMotorDir = (speed == 0) ? 0 : (speed > 0 ? 1 : -1);
     
-    Serial.print("   [MOTOR_SET] ");
+    Serial.print(F("   [MOTOR_SET] "));
     Serial.print(motorName);
-    Serial.print(" - Direction: ");
+    Serial.print(F(" - Direction: "));
     Serial.print(direction);
-    Serial.print(" | PWM Value: ");
+    Serial.print(F(" | PWM Value: "));
     Serial.println(speed);
     
     if (speed > 0) {
@@ -285,22 +287,22 @@ void setMotor(int motor, int speed) {
 }
 
 void sendStatus() {
-  Serial.println("\n--- ROBOT STATUS ---");
-  Serial.print("Left Motor Speed: "); Serial.print(leftMotorSpeed);
-  Serial.print(" | Direction: "); Serial.println((leftMotorDir > 0) ? "FWD" : (leftMotorDir < 0) ? "BWD" : "STOP");
+  Serial.println(F("\n--- ROBOT STATUS ---"));
+  Serial.print(F("Left Motor Speed: ")); Serial.print(leftMotorSpeed);
+  Serial.print(F(" | Direction: ")); Serial.println((leftMotorDir > 0) ? "FWD" : (leftMotorDir < 0) ? "BWD" : "STOP");
   
-  Serial.print("Right Motor Speed: "); Serial.print(rightMotorSpeed);
-  Serial.print(" | Direction: "); Serial.println((rightMotorDir > 0) ? "FWD" : (rightMotorDir < 0) ? "BWD" : "STOP");
+  Serial.print(F("Right Motor Speed: ")); Serial.print(rightMotorSpeed);
+  Serial.print(F(" | Direction: ")); Serial.println((rightMotorDir > 0) ? "FWD" : (rightMotorDir < 0) ? "BWD" : "STOP");
   
-  Serial.print("Encoder 1 Count: "); Serial.println(encoder1Count);
-  Serial.print("Encoder 2 Count: "); Serial.println(encoder2Count);
-  Serial.println("-------------------\n");
+  Serial.print(F("Encoder 1 Count: ")); Serial.println(encoder1Count);
+  Serial.print(F("Encoder 2 Count: ")); Serial.println(encoder2Count);
+  Serial.println(F("-------------------\n"));
   
   // Also send in original format for compatibility
-  Serial.print("STATUS:|lspeed="); Serial.print(leftMotorSpeed); Serial.print("|");
-  Serial.print("rspeed="); Serial.print(rightMotorSpeed); Serial.print("|");
-  Serial.print("e1="); Serial.print(encoder1Count); Serial.print("|");
-  Serial.print("e2="); Serial.println(encoder2Count);
+  Serial.print(F("STATUS:|lspeed=")); Serial.print(leftMotorSpeed); Serial.print(F("|"));
+  Serial.print(F("rspeed=")); Serial.print(rightMotorSpeed); Serial.print(F("|"));
+  Serial.print(F("e1=")); Serial.print(encoder1Count); Serial.print(F("|"));
+  Serial.print(F("e2=")); Serial.println(encoder2Count);
 }
 
 void stopMotors() {
@@ -340,3 +342,4 @@ void encoderISR1() {
 void encoderISR2() {
   encoder2Count++;
 }
+
