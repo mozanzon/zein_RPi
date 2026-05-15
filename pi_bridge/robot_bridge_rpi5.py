@@ -207,6 +207,17 @@ class ArduinoReader:
             if self.data_buffer:
                 return list(self.data_buffer)[-10:]  # Last 10 entries
         return []
+
+    def get_latest_sensor_data(self):
+        """Get the newest parsed Arduino sensor packet, skipping plain text logs."""
+        with self.lock:
+            for item in reversed(self.data_buffer):
+                parsed = item.get('parsed')
+                if not isinstance(parsed, dict):
+                    continue
+                if parsed.get('type') in ('status', 'compass', 'encoder'):
+                    return parsed
+        return None
     
     def stop(self):
         """Stop reading and close connection"""
@@ -473,7 +484,7 @@ class RobotBridge:
         while self.running:
             try:
                 # Get sensor data
-                arduino_data = self.arduino.get_latest_data()
+                arduino_data = self.arduino.get_latest_sensor_data()
                 
                 # Capture and process frame
                 frame = self.camera.get_frame()
@@ -493,7 +504,7 @@ class RobotBridge:
                 # Prepare broadcast data
                 broadcast_data = {
                     'timestamp': datetime.now().isoformat(),
-                    'arduino': arduino_data[-1]['parsed'] if arduino_data else None,
+                    'arduino': arduino_data,
                     'stats': {
                         'connected_clients': len(self.clients),
                         'loop_fps': sum(self.loop_fps) / len(self.loop_fps) if self.loop_fps else 0,
