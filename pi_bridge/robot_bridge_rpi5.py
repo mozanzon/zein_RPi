@@ -11,6 +11,7 @@ import time
 import threading
 import logging
 import base64
+import platform
 from collections import deque
 from datetime import datetime
 from pathlib import Path
@@ -210,18 +211,92 @@ class CameraCapture:
         self.cap = None
         self.current_frame = None
         self.lock = threading.Lock()
+        self.running = False
+        self.backend = None
+        self.last_error = None
+        self.frames_captured = 0
+        self.frames_encoded = 0
+        self.last_frame_at = None
         
     def initialize(self):
         """Initialize camera"""
+        if self._initialize_webcam():
+            return True
+        logger.error(f"Failed to initialize camera: {self.last_error}")
+        return False
+
+    def _camera_source(self):
+        """Allow --camera 0 or --camera /dev/video0."""
+        if isinstance(self.camera_id, str) and self.camera_id.isdigit():
+            return int(self.camera_id)
+        return self.camera_id
+
+    def _open_capture(self, source, backend):
+        if backend is None:
+            return cv2.VideoCapture(source)
+        return cv2.VideoCapture(source, backend)
+
+    def _initialize_webcam(self):
+        """Initialize a USB webcam through OpenCV/V4L2."""
+        source = self._camera_source()
+        backends = []
+        if platform.system().lower() == 'linux':
+            backends.append(('opencv-v4l2', cv2.CAP_V4L2))
+        backends.append(('opencv', None))
+
+        errors = []
+        for backend_name, backend_id in backends:
+            if self._try_webcam_backend(source, backend_name, backend_id):
+                return True
+            errors.append(self.last_error)
+
+        self.last_error = '; '.join([err for err in errors if err]) or f"Could not open webcam {source}"
+        return False
+
+    def _try_webcam_backend(self, source, backend_name, backend_id):
+        """Try one OpenCV backend and wait briefly for the first real frame."""
         try:
-            self.cap = cv2.VideoCapture(self.camera_id)
+            self.cap = self._open_capture(source, backend_id)
+            if not self.cap.isOpened():
+                self.last_error = f"{backend_name} could not open webcam {source}"
+                self.cap.release()
+                self.cap = None
+                return False
+
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
             self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-            logger.info(f"Camera initialized: {self.width}x{self.height}@{self.fps}fps")
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+            frame = None
+            deadline = time.time() + 3.0
+            while time.time() < deadline:
+                ok, candidate = self.cap.read()
+                if ok and candidate is not None and candidate.size > 0:
+                    frame = candidate
+                    break
+                time.sleep(0.05)
+
+            if frame is None:
+                self.last_error = f"{backend_name} opened webcam {source} but did not return frames after 3s"
+                self.cap.release()
+                self.cap = None
+                return False
+
+            with self.lock:
+                self.current_frame = frame
+            self.backend = backend_name
+            self.running = True
+            self.frames_captured = 1
+            self.last_frame_at = datetime.now().isoformat()
+            logger.info(f"Webcam initialized with {backend_name}: source={source} {self.width}x{self.height}@{self.fps}fps")
             return True
         except Exception as e:
-            logger.error(f"Failed to initialize camera: {e}")
+            self.last_error = f"{backend_name} webcam error: {e}"
+            if self.cap:
+                self.cap.release()
+                self.cap = None
             return False
     
     def start_capturing(self):
@@ -231,13 +306,33 @@ class CameraCapture:
     
     def _capture_loop(self):
         """Continuously capture frames"""
-        while self.cap:
-            ret, frame = self.cap.read()
-            if ret:
-                with self.lock:
-                    self.current_frame = frame
-            else:
-                logger.warning("Failed to capture frame")
+        failure_count = 0
+        while self.running:
+            try:
+                frame = None
+                if self.backend in ('opencv', 'opencv-v4l2') and self.cap:
+                    ret, frame = self.cap.read()
+                    if not ret:
+                        frame = None
+
+                if frame is not None and frame.size > 0:
+                    failure_count = 0
+                    self.last_error = None
+                    self.frames_captured += 1
+                    self.last_frame_at = datetime.now().isoformat()
+                    with self.lock:
+                        self.current_frame = frame
+                else:
+                    failure_count += 1
+                    self.last_error = f"Failed to capture frame from {self.backend or 'unknown'} camera"
+                    if failure_count % 30 == 1:
+                        logger.warning(self.last_error)
+                    time.sleep(0.1)
+            except Exception as e:
+                failure_count += 1
+                self.last_error = f"Camera capture error: {e}"
+                if failure_count % 30 == 1:
+                    logger.warning(self.last_error)
                 time.sleep(0.1)
     
     def get_frame(self):
@@ -249,8 +344,24 @@ class CameraCapture:
     
     def release(self):
         """Release camera"""
+        self.running = False
         if self.cap:
             self.cap.release()
+
+    def status(self):
+        """Get camera status for clients."""
+        with self.lock:
+            has_frame = self.current_frame is not None
+        return {
+            'camera_connected': self.running and self.cap is not None,
+            'camera_backend': self.backend,
+            'camera_has_frame': has_frame,
+            'camera_error': self.last_error,
+            'camera_source': str(self.camera_id),
+            'camera_frames_captured': self.frames_captured,
+            'camera_frames_encoded': self.frames_encoded,
+            'camera_last_frame_at': self.last_frame_at,
+        }
 
 
 class RobotBridge:
@@ -273,12 +384,13 @@ class RobotBridge:
             logger.error("Failed to initialize Arduino")
             return False
         
-        if not self.camera.initialize():
-            logger.error("Failed to initialize camera")
-            return False
+        camera_ready = self.camera.initialize()
+        if not camera_ready:
+            logger.error("Camera unavailable; bridge will continue without video frames")
         
         self.arduino.start_reading()
-        self.camera.start_capturing()
+        if camera_ready:
+            self.camera.start_capturing()
         self.running = True
         
         logger.info("Robot Bridge initialized successfully")
@@ -353,8 +465,13 @@ class RobotBridge:
                 
                 if frame is not None:
                     # Encode frame
-                    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-                    frame_base64 = base64.b64encode(buffer).decode()
+                    ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if ok:
+                        self.camera.frames_encoded += 1
+                        frame_base64 = base64.b64encode(buffer).decode()
+                    else:
+                        self.camera.last_error = "OpenCV failed to JPEG-encode webcam frame"
+                        frame_base64 = None
                 else:
                     frame_base64 = None
                 
@@ -365,6 +482,7 @@ class RobotBridge:
                     'stats': {
                         'connected_clients': len(self.clients),
                         'loop_fps': sum(self.loop_fps) / len(self.loop_fps) if self.loop_fps else 0,
+                        **self.camera.status(),
                     }
                 }
                 
@@ -430,7 +548,7 @@ def main():
     parser.add_argument('--arduino-port', default='/dev/ttyUSB0', help='Arduino serial port')
     parser.add_argument('--host', default='0.0.0.0', help='WebSocket host')
     parser.add_argument('--port', type=int, default=8765, help='WebSocket port')
-    parser.add_argument('--camera', type=int, default=0, help='Camera device ID')
+    parser.add_argument('--camera', default='0', help='Webcam index or path, e.g. 0 or /dev/video0')
     
     args = parser.parse_args()
     
