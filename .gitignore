@@ -11,5 +11,25 @@
 !/model/
 !/model/**
 
+# React dashboard app
+!/src/
+!/src/**
+!/index.html
+!/package.json
+!/package-lock.json
+!/tsconfig.json
+!/tsconfig.app.json
+!/tsconfig.node.json
+!/vite.config.ts
+
+# Frontend build output and dependencies
+/dist/
+/node_modules/
+
 # Keep .gitignore itself tracked
 !/.gitignore
+
+# Environment files
+/.env
+/.env.*
+!/.env.example
